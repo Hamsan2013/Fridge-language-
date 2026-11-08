@@ -2,6 +2,8 @@ name: Build and Release FRIDGE
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -46,14 +48,25 @@ jobs:
       - name: Create Release Archive
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/*, docs, tests -DestinationPath FRIDGE-Windows-x64.zip
+          Compress-Archive -Path dist\bin\fridge.exe, dist\resources, tests -DestinationPath dist\FRIDGE-Windows-x64.zip
 
+      # Uploads directly to the GitHub Actions run Summary page
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: FRIDGE-Windows-x64-Build
+          path: |
+            dist/FRIDGE-Windows-x64.zip
+            dist/fridge-vscode.vsix
+          retention-days: 30
+
+      # Creates an official GitHub Release if triggered with a version tag
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            FRIDGE-Windows-x64.zip
+            dist/FRIDGE-Windows-x64.zip
             dist/fridge-vscode.vsix
           generate_release_notes: true
         env:
