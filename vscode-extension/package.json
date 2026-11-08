@@ -1,0 +1,34 @@
+{
+  "name": "fridge-language",
+  "displayName": "FRIDGE Language Support",
+  "description": "Official syntax highlighting, icons, and runner for the FRIDGE programming language by Hamsan A.",
+  "version": "0.3.0",
+  "publisher": "hamsan-a",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "fridge",
+        "aliases": ["FRIDGE", "fridge"],
+        "extensions": [".frg", ".uzip"],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/fridge.ico",
+          "dark": "./icons/fridge.ico"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "fridge",
+        "scopeName": "source.frg",
+        "path": "./syntaxes/fridge.tmLanguage.json"
+      }
+    ]
+  }
+}
