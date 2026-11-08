@@ -1,0 +1,36 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "FRIDGE",
+  "scopeName": "source.frg",
+  "patterns": [
+    {
+      "name": "comment.line.frg",
+      "match": "(//|\\bnote\\b).*$"
+    },
+    {
+      "name": "string.quoted.double.frg",
+      "begin": "\"",
+      "end": "\""
+    },
+    {
+      "name": "keyword.control.frg",
+      "match": "\\b(if|otherwise|end if|repeat|times|end repeat|while|end while|for each|in|end for|when|end when|listen|for|end listen|attempt|on error|end attempt|child|end OBJ|end scene|end game|end window)\\b"
+    },
+    {
+      "name": "keyword.declaration.frg",
+      "match": "\\b(remember|as|set|to|becomes|show|ask|into|add OBJ|add|subtract|multiply|divide|by|from|move world environment|play sound|loop sound|use model|use image|wait|save|read|file|open|create)\\b"
+    },
+    {
+      "name": "keyword.operator.frg",
+      "match": "\\b(is|is not|greater than|less than|at least|at most|equal to|plus|minus|multiplied by|divided by|modulo|joined with|and|or|not)\\b"
+    },
+    {
+      "name": "constant.numeric.frg",
+      "match": "\\b[0-9]+(\\.[0-9]+)?\\b"
+    },
+    {
+      "name": "constant.language.frg",
+      "match": "\\b(true|false|nothing|seconds|milliseconds)\\b"
+    }
+  ]
+}
