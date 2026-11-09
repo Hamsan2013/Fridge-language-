@@ -39,7 +39,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   Path: string;
 begin
-  if (CurStep = ssPostInstall) and IsTaskSelected('envPath') then
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('envPath') then
   begin
     if RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', Path) then
     begin
