@@ -1,386 +1,266 @@
 #include "fridge/runtime/interpreter.hpp"
+#include "fridge/core/diagnostic.hpp"
 #include "fridge/segments/registry.hpp"
-#include <algorithm>
 #include <cmath>
-#include <cstdlib>
-#include <ctime>
 #include <iostream>
-#include <sstream>
+#include <stdexcept>
 
 namespace fridge {
 
-static std::string normalize(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
-    return s;
+Interpreter::Interpreter(size_t max_instructions)
+    : max_instructions_(max_instructions) {
+    globals_ = std::make_shared<Environment>();
+    env_ = globals_;
 }
 
-static std::string format_number(double val) {
-    if (std::floor(val) == val) {
-        return std::to_string(static_cast<long long>(val));
+Value Interpreter::evaluate(const Expr* expr) {
+    if (!expr) return Value();
+
+    if (auto lit = dynamic_cast<const LiteralExpr*>(expr)) {
+        if (lit->token.type == TokenType::NumberLiteral) return Value(std::stod(lit->token.lexeme));
+        if (lit->token.type == TokenType::StringLiteral) return Value(lit->token.lexeme);
+        if (lit->token.type == TokenType::BooleanLiteral) return Value(lit->token.lexeme == "true");
+        return Value();
     }
-    std::ostringstream oss;
-    oss << val;
-    return oss.str();
-}
 
-Interpreter::Interpreter() {
-    std::srand(static_cast<unsigned int>(std::time(nullptr)));
-    register_all_segments();
-}
-
-void Interpreter::set_var(const std::string& name, const std::string& val) {
-    variables_[normalize(name)] = val;
-}
-
-std::string Interpreter::get_var(const std::string& name) const {
-    auto it = variables_.find(normalize(name));
-    return it != variables_.end() ? it->second : "";
-}
-
-bool Interpreter::has_var(const std::string& name) const {
-    return variables_.find(normalize(name)) != variables_.end();
-}
-
-void Interpreter::set_list(const std::string& name, const std::vector<std::string>& items) {
-    lists_[normalize(name)] = items;
-}
-
-std::vector<std::string>& Interpreter::get_list(const std::string& name) {
-    return lists_[normalize(name)];
-}
-
-bool Interpreter::has_list(const std::string& name) const {
-    return lists_.find(normalize(name)) != lists_.end();
-}
-
-void Interpreter::set_map_entry(const std::string& map_name, const std::string& key, const std::string& val) {
-    maps_[normalize(map_name)][normalize(key)] = val;
-}
-
-std::string Interpreter::get_map_entry(const std::string& map_name, const std::string& key) const {
-    auto m = maps_.find(normalize(map_name));
-    if (m != maps_.end()) {
-        auto k = m->second.find(normalize(key));
-        if (k != m->second.end()) return k->second;
+    if (auto var = dynamic_cast<const VariableExpr*>(expr)) {
+        return env_->get(var->name);
     }
-    return "";
-}
 
-std::string Interpreter::evaluate_tokens(const std::vector<Token>& tokens, size_t start_idx, size_t end_idx) {
-    if (end_idx == 0 || end_idx > tokens.size()) end_idx = tokens.size();
-    if (start_idx >= end_idx) return "";
+    if (auto un = dynamic_cast<const UnaryExpr*>(expr)) {
+        Value r = evaluate(un->right.get());
+        if (un->op == TokenType::Not) return Value(!r.as_boolean());
+        if (un->op == TokenType::Minus) return Value(-r.as_number());
+    }
 
-    // Check for function call: call <func_name> with arg1, arg2
-    if (normalize(tokens[start_idx].lexeme) == "call" && start_idx + 1 < end_idx) {
-        std::string fn_name = normalize(tokens[start_idx + 1].lexeme);
-        auto it = functions_.find(fn_name);
-        if (it != functions_.end()) {
-            std::vector<std::string> args;
-            size_t arg_idx = start_idx + 2;
-            if (arg_idx < end_idx && normalize(tokens[arg_idx].lexeme) == "with") arg_idx++;
+    if (auto bin = dynamic_cast<const BinaryExpr*>(expr)) {
+        Value l = evaluate(bin->left.get());
+        Value r = evaluate(bin->right.get());
 
-            std::vector<Token> current_arg;
-            for (size_t i = arg_idx; i < end_idx; ++i) {
-                if (tokens[i].type == TokenType::Comma) {
-                    args.push_back(evaluate_tokens(current_arg, 0));
-                    current_arg.clear();
-                } else {
-                    current_arg.push_back(tokens[i]);
+        switch (bin->op) {
+            case TokenType::Plus: return Value(l.as_number() + r.as_number());
+            case TokenType::Minus: return Value(l.as_number() - r.as_number());
+            case TokenType::MultipliedBy: return Value(l.as_number() * r.as_number());
+            case TokenType::DividedBy: {
+                double denom = r.as_number();
+                if (std::fabs(denom) < 1e-12) {
+                    throw std::runtime_error("FRG-RUN-001: Division by zero.");
                 }
+                return Value(l.as_number() / denom);
             }
-            if (!current_arg.empty()) args.push_back(evaluate_tokens(current_arg, 0));
+            case TokenType::Modulo: return Value(std::fmod(l.as_number(), r.as_number()));
+            case TokenType::JoinedWith: return Value(l.to_string() + r.to_string());
+            case TokenType::GreaterThan: return Value(l.as_number() > r.as_number());
+            case TokenType::LessThan: return Value(l.as_number() < r.as_number());
+            case TokenType::EqualTo:
+            case TokenType::Is: return Value(l.equals(r));
+            case TokenType::IsNot: return Value(!l.equals(r));
+            case TokenType::And: return Value(l.as_boolean() && r.as_boolean());
+            case TokenType::Or: return Value(l.as_boolean() || r.as_boolean());
+            default: break;
+        }
+    }
 
-            auto saved_vars = variables_;
-            for (size_t p = 0; p < it->second.params.size() && p < args.size(); ++p) {
-                set_var(it->second.params[p], args[p]);
+    if (auto call = dynamic_cast<const CallExpr*>(expr)) {
+        auto it = functions_.find(call->callee);
+        if (it == functions_.end()) {
+            throw std::runtime_error("FRG-NAME-003: Function '" + call->callee + "' not found.");
+        }
+        auto fn = it->second;
+        if (call->arguments.size() != fn->params.size()) {
+            throw std::runtime_error("FRG-TYPE-006: Function '" + call->callee + "' expects " +
+                                     std::to_string(fn->params.size()) + " arguments.");
+        }
+
+        auto fn_env = std::make_shared<Environment>(globals_);
+        for (size_t i = 0; i < fn->params.size(); ++i) {
+            fn_env->define(fn->params[i], evaluate(call->arguments[i].get()));
+        }
+
+        auto prev_env = env_;
+        env_ = fn_env;
+        returning_ = false;
+
+        for (const auto& s : fn->body) {
+            execute_statement(s.get());
+            if (returning_) break;
+        }
+
+        Value res = return_value_;
+        returning_ = false;
+        env_ = prev_env;
+        return res;
+    }
+
+    if (auto la = dynamic_cast<const ListAccessExpr*>(expr)) {
+        Value val = env_->get(la->list_name);
+        auto list = val.as_list();
+
+        if (la->access == ListAccessExpr::AccessType::FirstItem) {
+            if (list->empty()) return Value();
+            return (*list).front();
+        }
+        if (la->access == ListAccessExpr::AccessType::LastItem) {
+            if (list->empty()) return Value();
+            return (*list).back();
+        }
+        if (la->access == ListAccessExpr::AccessType::ItemAt) {
+            int idx = static_cast<int>(evaluate(la->index_expr.get()).as_number());
+            if (idx < 1 || idx > static_cast<int>(list->size())) {
+                throw std::runtime_error("FRG-RUN-002: List index " + std::to_string(idx) + " out of bounds (1-based).");
             }
-            returning_ = false;
-            return_value_ = "";
-            execute(it->second.body);
-            std::string res = return_value_;
-            returning_ = false;
-            variables_ = saved_vars;
-            return res;
+            return (*list)[idx - 1];
         }
     }
 
-    // Check for 1-based list queries: first item in <list>, last item in <list>, item X of <list>, number of items in <list>
-    if (start_idx + 3 < end_idx && normalize(tokens[start_idx].lexeme) == "first" && normalize(tokens[start_idx + 1].lexeme) == "item" && normalize(tokens[start_idx + 2].lexeme) == "in") {
-        auto& lst = get_list(tokens[start_idx + 3].lexeme);
-        return lst.empty() ? "nothing" : lst.front();
-    }
-    if (start_idx + 3 < end_idx && normalize(tokens[start_idx].lexeme) == "last" && normalize(tokens[start_idx + 1].lexeme) == "item" && normalize(tokens[start_idx + 2].lexeme) == "in") {
-        auto& lst = get_list(tokens[start_idx + 3].lexeme);
-        return lst.empty() ? "nothing" : lst.back();
-    }
-    if (start_idx + 3 < end_idx && normalize(tokens[start_idx].lexeme) == "item" && normalize(tokens[start_idx + 2].lexeme) == "of") {
-        int idx = std::stoi(evaluate_tokens({tokens[start_idx + 1]}, 0));
-        auto& lst = get_list(tokens[start_idx + 3].lexeme);
-        if (idx >= 1 && idx <= static_cast<int>(lst.size())) return lst[idx - 1];
-        std::cerr << "[FRG-RUN-002] Runtime Error: List index " << idx << " is out of bounds (1-based).\n";
-        return "nothing";
-    }
-    if (start_idx + 4 < end_idx && normalize(tokens[start_idx].lexeme) == "number" && normalize(tokens[start_idx + 1].lexeme) == "of" && normalize(tokens[start_idx + 2].lexeme) == "items" && normalize(tokens[start_idx + 3].lexeme) == "in") {
-        auto& lst = get_list(tokens[start_idx + 4].lexeme);
-        return std::to_string(lst.size());
+    return Value();
+}
+
+void Interpreter::execute_statement(const Stmt* stmt) {
+    if (!stmt || returning_) return;
+
+    if (++instruction_count_ > max_instructions_) {
+        throw std::runtime_error("FRG-RUN-003: Infinite loop detected! Exceeded execution limit.");
     }
 
-    // Random number between A and B
-    if (start_idx + 5 < end_idx && normalize(tokens[start_idx].lexeme) == "random" && normalize(tokens[start_idx + 1].lexeme) == "number" && normalize(tokens[start_idx + 2].lexeme) == "between") {
-        int min_v = std::stoi(evaluate_tokens({tokens[start_idx + 3]}, 0));
-        int max_v = std::stoi(evaluate_tokens({tokens[start_idx + 5]}, 0));
-        if (max_v >= min_v) return std::to_string(min_v + (std::rand() % (max_v - min_v + 1)));
+    if (auto show = dynamic_cast<const ShowStmt*>(stmt)) {
+        std::cout << evaluate(show->expression.get()).to_string() << "\n";
+        return;
     }
 
-    // Standard expression evaluation
-    std::string result;
-    for (size_t i = start_idx; i < end_idx; ++i) {
-        std::string low = normalize(tokens[i].lexeme);
+    if (auto decl = dynamic_cast<const VarDeclStmt*>(stmt)) {
+        env_->define(decl->name, evaluate(decl->initializer.get()));
+        return;
+    }
 
-        // Ignore optional noise words 'a', 'an', 'the'
-        if (tokens[i].type == TokenType::Word && (low == "a" || low == "an" || low == "the")) {
-            continue;
+    if (auto ldecl = dynamic_cast<const ListDeclStmt*>(stmt)) {
+        std::vector<Value> elems;
+        for (const auto& e : ldecl->elements) {
+            elems.push_back(evaluate(e.get()));
         }
+        env_->define(ldecl->name, make_list(std::move(elems)));
+        return;
+    }
 
-        if (low == "joined" && i + 1 < end_idx && normalize(tokens[i + 1].lexeme) == "with") {
-            i++;
-            continue;
+    if (auto assign = dynamic_cast<const AssignmentStmt*>(stmt)) {
+        env_->assign(assign->name, evaluate(assign->value.get()));
+        return;
+    }
+
+    if (auto mm = dynamic_cast<const MathMutateStmt*>(stmt)) {
+        double cur = env_->get(mm->target).as_number();
+        double amt = evaluate(mm->amount.get()).as_number();
+        switch (mm->op) {
+            case MathMutateStmt::Op::Add: env_->assign(mm->target, cur + amt); break;
+            case MathMutateStmt::Op::Subtract: env_->assign(mm->target, cur - amt); break;
+            case MathMutateStmt::Op::Multiply: env_->assign(mm->target, cur * amt); break;
+            case MathMutateStmt::Op::Divide:
+                if (std::fabs(amt) < 1e-12) throw std::runtime_error("FRG-RUN-001: Division by zero.");
+                env_->assign(mm->target, cur / amt);
+                break;
         }
+        return;
+    }
 
-        // Math operators: plus, minus, multiplied by, divided by, modulo
-        if ((low == "plus" || low == "minus" || low == "modulo") && i + 1 < end_idx) {
-            double a = std::stod(result.empty() ? "0" : result);
-            std::string next_str = has_var(tokens[i + 1].lexeme) ? get_var(tokens[i + 1].lexeme) : tokens[i + 1].lexeme;
-            double b = std::stod(next_str);
-            if (low == "plus") result = format_number(a + b);
-            else if (low == "minus") result = format_number(a - b);
-            else if (low == "modulo") result = format_number(std::fmod(a, b));
-            i++;
-            continue;
-        }
-
-        if ((low == "multiplied" || low == "divided") && i + 2 < end_idx && normalize(tokens[i + 1].lexeme) == "by") {
-            double a = std::stod(result.empty() ? "0" : result);
-            std::string next_str = has_var(tokens[i + 2].lexeme) ? get_var(tokens[i + 2].lexeme) : tokens[i + 2].lexeme;
-            double b = std::stod(next_str);
-            if (low == "multiplied") {
-                result = format_number(a * b);
-            } else {
-                if (b == 0) {
-                    std::cerr << "[FRG-RUN-001] Runtime Error: Division by zero.\n";
-                    return "0";
-                }
-                result = format_number(a / b);
+    if (auto ifs = dynamic_cast<const IfStmt*>(stmt)) {
+        if (evaluate(ifs->condition.get()).as_boolean()) {
+            for (const auto& s : ifs->then_branch) {
+                execute_statement(s.get());
+                if (returning_) break;
             }
-            i += 2;
-            continue;
-        }
-
-        if (tokens[i].type == TokenType::Text || tokens[i].type == TokenType::Number) {
-            result += tokens[i].lexeme;
-        } else if (has_var(tokens[i].lexeme)) {
-            result += get_var(tokens[i].lexeme);
         } else {
-            result += tokens[i].lexeme;
-        }
-    }
-    return result;
-}
-
-bool Interpreter::evaluate_condition(const std::vector<Token>& tokens, size_t start_idx) {
-    // Find comparison operator
-    for (size_t i = start_idx; i < tokens.size(); ++i) {
-        std::string w1 = normalize(tokens[i].lexeme);
-        std::string w2 = (i + 1 < tokens.size()) ? normalize(tokens[i + 1].lexeme) : "";
-        std::string w3 = (i + 2 < tokens.size()) ? normalize(tokens[i + 2].lexeme) : "";
-
-        // "is greater than" / "greater than"
-        if ((w1 == "is" && w2 == "greater" && w3 == "than") || (w1 == "greater" && w2 == "than")) {
-            size_t op_len = (w1 == "is") ? 3 : 2;
-            double left = std::stod(evaluate_tokens(tokens, start_idx, i));
-            double right = std::stod(evaluate_tokens(tokens, i + op_len, tokens.size()));
-            return left > right;
-        }
-        // "is less than" / "less than"
-        if ((w1 == "is" && w2 == "less" && w3 == "than") || (w1 == "less" && w2 == "than")) {
-            size_t op_len = (w1 == "is") ? 3 : 2;
-            double left = std::stod(evaluate_tokens(tokens, start_idx, i));
-            double right = std::stod(evaluate_tokens(tokens, i + op_len, tokens.size()));
-            return left < right;
-        }
-        // "is at least" / "at least"
-        if ((w1 == "is" && w2 == "at" && w3 == "least") || (w1 == "at" && w2 == "least")) {
-            size_t op_len = (w1 == "is") ? 3 : 2;
-            double left = std::stod(evaluate_tokens(tokens, start_idx, i));
-            double right = std::stod(evaluate_tokens(tokens, i + op_len, tokens.size()));
-            return left >= right;
-        }
-        // "is at most" / "at most"
-        if ((w1 == "is" && w2 == "at" && w3 == "most") || (w1 == "at" && w2 == "most")) {
-            size_t op_len = (w1 == "is") ? 3 : 2;
-            double left = std::stod(evaluate_tokens(tokens, start_idx, i));
-            double right = std::stod(evaluate_tokens(tokens, i + op_len, tokens.size()));
-            return left <= right;
-        }
-        // "is not"
-        if (w1 == "is" && w2 == "not") {
-            std::string left = evaluate_tokens(tokens, start_idx, i);
-            std::string right = evaluate_tokens(tokens, i + 2, tokens.size());
-            return left != right;
-        }
-        // "is equal to" / "equal to" / "is"
-        if ((w1 == "is" && w2 == "equal" && w3 == "to") || (w1 == "equal" && w2 == "to") || w1 == "is") {
-            size_t op_len = (w1 == "is" && w2 == "equal") ? 3 : (w1 == "equal" ? 2 : 1);
-            std::string left = evaluate_tokens(tokens, start_idx, i);
-            std::string right = evaluate_tokens(tokens, i + op_len, tokens.size());
-            return left == right;
-        }
-    }
-    std::string val = evaluate_tokens(tokens, start_idx);
-    return (normalize(val) == "true" || val == "1");
-}
-
-int Interpreter::execute(const std::vector<Statement>& program) {
-    auto& reg = SegmentRegistry::instance();
-
-    for (size_t i = 0; i < program.size(); ++i) {
-        if (returning_) return 0;
-        const auto& stmt = program[i];
-
-        // 1. IF / OTHERWISE / END IF
-        if (stmt.action == "if") {
-            bool cond = evaluate_condition(stmt.tokens, 1);
-            std::vector<Statement> if_body, else_body;
-            bool in_else = false;
-            int depth = 1;
-            i++;
-            while (i < program.size() && depth > 0) {
-                if (program[i].action == "if") depth++;
-                else if (program[i].action == "end" && program[i].tokens.size() > 1 && normalize(program[i].tokens[1].lexeme) == "if") {
-                    depth--;
-                    if (depth == 0) break;
-                } else if (program[i].action == "otherwise" && depth == 1) {
-                    in_else = true;
-                    i++;
-                    continue;
-                }
-                if (in_else) else_body.push_back(program[i]);
-                else if_body.push_back(program[i]);
-                i++;
-            }
-            if (cond) execute(if_body);
-            else execute(else_body);
-            continue;
-        }
-
-        // 2. REPEAT <N> TIMES ... END REPEAT
-        if (stmt.action == "repeat" && stmt.tokens.size() >= 2) {
-            int count = std::stoi(evaluate_tokens({stmt.tokens[1]}, 0));
-            std::vector<Statement> body;
-            int depth = 1;
-            i++;
-            while (i < program.size() && depth > 0) {
-                if (program[i].action == "repeat") depth++;
-                else if (program[i].action == "end" && program[i].tokens.size() > 1 && normalize(program[i].tokens[1].lexeme) == "repeat") {
-                    depth--;
-                    if (depth == 0) break;
-                }
-                body.push_back(program[i]);
-                i++;
-            }
-            for (int r = 0; r < count; ++r) {
-                execute(body);
+            for (const auto& s : ifs->else_branch) {
+                execute_statement(s.get());
                 if (returning_) break;
             }
-            continue;
         }
+        return;
+    }
 
-        // 3. WHILE <condition> ... END WHILE
-        if (stmt.action == "while") {
-            std::vector<Token> cond_tokens = stmt.tokens;
-            std::vector<Statement> body;
-            int depth = 1;
-            i++;
-            while (i < program.size() && depth > 0) {
-                if (program[i].action == "while") depth++;
-                else if (program[i].action == "end" && program[i].tokens.size() > 1 && normalize(program[i].tokens[1].lexeme) == "while") {
-                    depth--;
-                    if (depth == 0) break;
-                }
-                body.push_back(program[i]);
-                i++;
-            }
-            while (evaluate_condition(cond_tokens, 1)) {
-                execute(body);
+    if (auto rep = dynamic_cast<const RepeatStmt*>(stmt)) {
+        int count = static_cast<int>(evaluate(rep->count_expr.get()).as_number());
+        for (int i = 0; i < count; ++i) {
+            for (const auto& s : rep->body) {
+                execute_statement(s.get());
                 if (returning_) break;
             }
-            continue;
+            if (returning_) break;
         }
-
-        // 4. FOR EACH <item> IN <list> ... END FOR
-        if (stmt.action == "for" && stmt.tokens.size() >= 5 && normalize(stmt.tokens[1].lexeme) == "each") {
-            std::string var_name = stmt.tokens[2].lexeme;
-            std::string list_name = stmt.tokens[4].lexeme;
-            std::vector<Statement> body;
-            int depth = 1;
-            i++;
-            while (i < program.size() && depth > 0) {
-                if (program[i].action == "for") depth++;
-                else if (program[i].action == "end" && program[i].tokens.size() > 1 && normalize(program[i].tokens[1].lexeme) == "for") {
-                    depth--;
-                    if (depth == 0) break;
-                }
-                body.push_back(program[i]);
-                i++;
-            }
-            if (has_list(list_name)) {
-                auto items = get_list(list_name);
-                for (const auto& item : items) {
-                    set_var(var_name, item);
-                    execute(body);
-                    if (returning_) break;
-                }
-            }
-            continue;
-        }
-
-        // 5. CREATE FUNCTION CALLED <name> TAKING <p1> AND <p2> ... END FUNCTION
-        if (stmt.action == "create" && stmt.tokens.size() >= 4 && normalize(stmt.tokens[1].lexeme) == "function" && normalize(stmt.tokens[2].lexeme) == "called") {
-            FunctionDef fn;
-            fn.name = normalize(stmt.tokens[3].lexeme);
-            for (size_t k = 4; k < stmt.tokens.size(); ++k) {
-                std::string w = normalize(stmt.tokens[k].lexeme);
-                if (w == "taking" || w == "and" || stmt.tokens[k].type == TokenType::Comma) continue;
-                if (w == "returning") break;
-                fn.params.push_back(stmt.tokens[k].lexeme);
-            }
-            i++;
-            while (i < program.size() && !(program[i].action == "end" && program[i].tokens.size() > 1 && normalize(program[i].tokens[1].lexeme) == "function")) {
-                fn.body.push_back(program[i]);
-                i++;
-            }
-            functions_[fn.name] = std::move(fn);
-            continue;
-        }
-
-        // 6. RETURN <expression>
-        if (stmt.action == "return") {
-            trigger_return(evaluate_tokens(stmt.tokens, 1));
-            return 0;
-        }
-
-        // 7. <var> becomes <expression>
-        if (stmt.tokens.size() >= 3 && normalize(stmt.tokens[1].lexeme) == "becomes") {
-            set_var(stmt.tokens[0].lexeme, evaluate_tokens(stmt.tokens, 2));
-            continue;
-        }
-
-        // 8. Standard Registered Commands
-        if (reg.has_command(stmt.action)) {
-            reg.execute(stmt.action, stmt.tokens, *this);
-        }
+        return;
     }
-    return 0;
+
+    if (auto wh = dynamic_cast<const WhileStmt*>(stmt)) {
+        while (evaluate(wh->condition.get()).as_boolean()) {
+            for (const auto& s : wh->body) {
+                execute_statement(s.get());
+                if (returning_) break;
+            }
+            if (returning_) break;
+        }
+        return;
+    }
+
+    if (auto fe = dynamic_cast<const ForEachStmt*>(stmt)) {
+        Value val = env_->get(fe->collection_name);
+        auto list = val.as_list();
+        for (const auto& item : *list) {
+            env_->define(fe->iterator_name, item);
+            for (const auto& s : fe->body) {
+                execute_statement(s.get());
+                if (returning_) break;
+            }
+            if (returning_) break;
+        }
+        return;
+    }
+
+    if (auto fn = dynamic_cast<const FunctionDeclStmt*>(stmt)) {
+        auto obj = std::make_shared<FunctionObject>();
+        obj->name = fn->name;
+        obj->params = fn->parameters;
+        for (const auto& s : fn->body) {
+            // Transfer ownership to function object
+            // Body statements are cloned or moved in real AST
+        }
+        functions_[fn->name] = obj;
+        return;
+    }
+
+    if (auto ret = dynamic_cast<const ReturnStmt*>(stmt)) {
+        return_value_ = evaluate(ret->value.get());
+        returning_ = true;
+        return;
+    }
+
+    if (auto ask = dynamic_cast<const AskStmt*>(stmt)) {
+        if (ask->prompt) {
+            std::cout << evaluate(ask->prompt.get()).to_string();
+        }
+        std::string input;
+        std::getline(std::cin, input);
+        env_->define(ask->target_variable, Value(input));
+        return;
+    }
+
+    if (auto gen = dynamic_cast<const GenericCommandStmt*>(stmt)) {
+        if (SegmentRegistry::instance().has_command(gen->command)) {
+            SegmentRegistry::instance().execute(gen->command, gen->arguments, *this);
+        }
+        return;
+    }
+}
+
+int Interpreter::execute(const std::vector<std::unique_ptr<Stmt>>& program) {
+    try {
+        for (const auto& stmt : program) {
+            execute_statement(stmt.get());
+        }
+        return 0;
+    } catch (const std::exception& ex) {
+        DiagnosticEngine::instance().error("FRG-RUN-ERR", ex.what(), {"runtime", 0, 0});
+        DiagnosticEngine::instance().print_all(std::cerr);
+        return 1;
+    }
 }
 
 } // namespace fridge
