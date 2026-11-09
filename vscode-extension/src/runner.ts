@@ -39,24 +39,21 @@ export function findFridgeExecutable(): string | null {
     }
 
     try {
-            // ✅ FIXED CODE IN runner.ts:
-            const cmd = process.platform === 'win32'
-             ? `& "${exe}" run "${filePath}"`
-              : `"${exe}" run "${filePath}"`;
-terminal.sendText(cmd);
-        const result = execSync(cmd, { stdio: ['pipe', 'pipe', 'ignore'] })
+        const lookupCommand = process.platform === 'win32'
+            ? 'where.exe fridge'
+            : 'which fridge';
+
+        const result = execSync(lookupCommand, { stdio: ['ignore', 'pipe', 'ignore'] })
             .toString()
             .trim()
             .split(/\r?\n/)[0];
+
         if (result && fs.existsSync(result)) {
             return result;
         }
     } catch (_) {
         // Ignore lookup error and return null below
     }
-
-    return null;
-}
 
 export function runFridgeFile(document: vscode.TextDocument): void {
     if (document.isDirty) {
