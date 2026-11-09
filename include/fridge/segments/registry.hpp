@@ -1,5 +1,4 @@
 #pragma once
-#include "fridge/core/token.hpp"
 #include <functional>
 #include <string>
 #include <unordered_map>
@@ -9,7 +8,7 @@ namespace fridge {
 
 class Interpreter;
 
-using SegmentHandler = std::function<void(const std::vector<Token>&, Interpreter&)>;
+using SegmentHandler = std::function<void(const std::vector<std::string>&, Interpreter&)>;
 
 class SegmentRegistry {
 public:
@@ -26,10 +25,10 @@ public:
         return handlers_.find(keyword) != handlers_.end();
     }
 
-    void execute(const std::string& keyword, const std::vector<Token>& tokens, Interpreter& interp) {
+    void execute(const std::string& keyword, const std::vector<std::string>& args, Interpreter& interp) {
         auto it = handlers_.find(keyword);
         if (it != handlers_.end()) {
-            it->second(tokens, interp);
+            it->second(args, interp);
         }
     }
 
