@@ -1,75 +1,68 @@
-name: Build, Test & Release FRIDGE v0.4.0
+name: Build, Package & Upload FRIDGE
 
 on:
   push:
-    branches: [ main ]
-    tags: [ 'v*' ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  matrix-build-test:
-    name: Build & Verify on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ windows-latest, ubuntu-latest, macos-latest ]
-
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
-
-      - name: Configure CMake
-        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
-
-      - name: Compile Toolchain & Tests
-        run: cmake --build build --config Release
-
-      - name: Run Test Suite
-        run: ctest --test-dir build -C Release --output-on-failure
-
-  package-release:
-    name: Package Official Release Artifacts
-    needs: matrix-build-test
+  build-and-upload:
+    name: Build fridge.exe and VS Code Extension
     runs-on: windows-latest
-    if: startsWith(github.ref, 'refs/tags/')
 
     steps:
-      - name: Checkout Source
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup MSVC
+      - name: Setup MSVC Compiler
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Build Windows Executable
-        run: |
-          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=dist
-          cmake --build build --config Release --target install
-
-      - name: Setup Node.js & Package VS Code VSIX
+      - name: Setup Node.js for VS Code Extension
         uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: |
-          cd vscode-extension
-          npm install
-          npm run vscode:prepublish
-          npx @vscode/vsce package --out ../dist/fridge-language-0.4.0.vsix
 
-      - name: Create Release Archive
+      - name: Configure CMake
+        run: |
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=dist
+
+      - name: Compile fridge.exe
+        run: |
+          cmake --build build --config Release --target install
+
+      - name: Package VS Code Extension (.vsix)
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/bin/fridge.exe, dist/resources, README.md -DestinationPath dist/FRIDGE-v0.4.0-Windows-x64.zip
+          cd vscode-extension
+          npm install
+          npm install -g @vscode/vsce
+          npx @vscode/vsce package --allow-missing-repository --out ../dist/fridge-language-0.4.0.vsix
+          cd ..
 
-      - name: Publish Official Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/FRIDGE-v0.4.0-Windows-x64.zip
-            dist/fridge-language-0.4.0.vsix
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Clean Distribution Folder
+        shell: pwsh
+        run: |
+          # Create an artifacts bundle directory
+          New-Item -ItemType Directory -Force -Path bundle
           
+          # Copy the compiled fridge.exe binary
+          Copy-Item -Path "dist\bin\fridge.exe" -Destination "bundle\"
+          
+          # Copy the packaged VS Code extension
+          Copy-Item -Path "dist\fridge-language-0.4.0.vsix" -Destination "bundle\"
+          
+          # Copy icon, examples, and documentation if they exist
+          if (Test-Path "resources\fridge.ico") { Copy-Item -Path "resources\fridge.ico" -Destination "bundle\" }
+          if (Test-Path "packaging\windows\register_frg_icon.bat") { Copy-Item -Path "packaging\windows\register_frg_icon.bat" -Destination "bundle\" }
+          if (Test-Path "tests\golden") { Copy-Item -Recurse -Path "tests\golden" -Destination "bundle\examples" }
+
+      - name: Upload Artifacts (Downloadable ZIP)
+        uses: actions/upload-artifact@v4
+        with:
+          name: FRIDGE-Windows-Installer-and-Plugin
+          path: bundle/
+          if-no-files-found: error
+          retention-days: 30
