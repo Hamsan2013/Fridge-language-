@@ -1,5 +1,7 @@
+#pragma once
 #include "fridge/core/token.hpp"
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -44,8 +46,37 @@ public:
     const std::vector<Diagnostic>& list() const { return diagnostics_; }
     void clear() { diagnostics_.clear(); }
 
-    void print_all(std::ostream& os) const;
-    std::string to_json() const;
+    void print_all(std::ostream& os) const {
+        for (const auto& d : diagnostics_) {
+            os << "[" << d.code << "] "
+               << (d.severity == DiagnosticSeverity::Error ? "Error: " : "Warning: ")
+               << d.message << "\n"
+               << "  --> " << d.location.filename << ":" << d.location.line << ":" << d.location.column << "\n";
+            if (!d.suggestion.empty()) {
+                os << "  Suggestion: " << d.suggestion << "\n";
+            }
+            os << "\n";
+        }
+    }
+
+    std::string to_json() const {
+        std::ostringstream ss;
+        ss << "[\n";
+        for (size_t i = 0; i < diagnostics_.size(); ++i) {
+            const auto& d = diagnostics_[i];
+            ss << "  {\n"
+               << "    \"code\": \"" << d.code << "\",\n"
+               << "    \"severity\": \"" << (d.severity == DiagnosticSeverity::Error ? "error" : "warning") << "\",\n"
+               << "    \"message\": \"" << d.message << "\",\n"
+               << "    \"file\": \"" << d.location.filename << "\",\n"
+               << "    \"line\": " << d.location.line << ",\n"
+               << "    \"column\": " << d.location.column << ",\n"
+               << "    \"suggestion\": \"" << d.suggestion << "\"\n"
+               << "  }" << (i + 1 < diagnostics_.size() ? "," : "") << "\n";
+        }
+        ss << "]";
+        return ss.str();
+    }
 
 private:
     DiagnosticEngine() = default;
@@ -53,4 +84,3 @@ private:
 };
 
 } // namespace fridge
-
