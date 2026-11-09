@@ -3,13 +3,14 @@
 #include "fridge/runtime/environment.hpp"
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 namespace fridge {
 
 struct FunctionObject {
     std::string name;
     std::vector<std::string> params;
-    std::vector<std::unique_ptr<Stmt>> body;
+    std::vector<const Stmt*> body;
 };
 
 class Interpreter {
