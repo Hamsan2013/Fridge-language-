@@ -1,26 +1,28 @@
 # FRIDGE Language Support for Acode
 
-A small Acode plugin that registers the `.frg` file extension as the **FRIDGE** language.
+FRIDGE language mode and basic Run / Check actions for `.frg` files.
 
-## Included in this first build
+## Features
 
-- Recognizes files ending in `.frg`.
-- Registers a dedicated **FRIDGE** language mode in Acode.
-- Shows a notification when the plugin is loaded.
-- Cleans up the language registration when the plugin is disabled or unloaded.
+- Registers `.frg` files as **FRIDGE**.
+- Adds a **▶ Run** button when a `.frg` file is open.
+- Adds a **✓ Check** button when a `.frg` file is open.
+- Adds FRIDGE Run and Check commands where Acode's command API is available.
+- Sends the current editor contents to Acode's built-in terminal, including unsaved changes.
 
-## Current limitation
+## Important: terminal environments
 
-This is the first packaging version. It registers the FRIDGE file type, but does not yet provide keyword coloring, autocomplete, diagnostics, or a FRIDGE interpreter. Those can be added in later versions.
+This plugin currently uses Acode's built-in terminal. It does **not** execute commands inside the separate Termux app. A FRIDGE binary installed in Termux is therefore not automatically available to this plugin.
 
-## Install
+Open Acode's menu → Terminal and complete terminal setup. Then make the `fridge` command available inside that terminal environment. When the command is missing, the plugin prints a clear message in the terminal.
 
-1. Download `FRIDGE-Acode-Plugin.zip` from the GitHub Actions artifact.
-2. Open Acode → Settings → Plugins.
-3. Tap **+** → **LOCAL**.
-4. Select the ZIP file.
-5. Open a `.frg` file.
+## Use
+
+1. Open Acode's built-in Terminal once and complete setup.
+2. Open a `.frg` file.
+3. Tap **▶** to run or **✓** to check.
+4. Read the output in the terminal tab.
 
 ## Build
 
-The repository workflow `.github/workflows/build-acode-plugin.yml` packages this directory into `FRIDGE-Acode-Plugin.zip`.
+GitHub Actions packages this directory into `FRIDGE-Acode-Plugin.zip`.
