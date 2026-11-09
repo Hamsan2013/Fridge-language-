@@ -15,10 +15,10 @@ export function updateDiagnostics(document: vscode.TextDocument, collection: vsc
         while ((match = errorRegex.exec(output)) !== null) {
             const line = Math.max(0, parseInt(match[3]) - 1);
             const col = Math.max(0, parseInt(match[4]) - 1);
-            const range = new Range(line, col, line, col + 10);
+            const range = new vscode.Range(line, col, line, col + 10);
             diagnostics.push(new vscode.Diagnostic(range, match[2], vscode.DiagnosticSeverity.Error));
         }
 
         collection.set(document.uri, diagnostics);
     });
-          }
+}
