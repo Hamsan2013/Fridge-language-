@@ -50,10 +50,14 @@ export function findFridgeExecutable(): string | null {
 
         if (result && fs.existsSync(result)) {
             return result;
-        }
-    } catch (_) {
+            } catch (_) {
         // Ignore lookup error and return null below
-    }
+        }
+
+            return null;
+        }
+
+export function runFridgeFile(document: vscode.TextDocument): void {
 
 export function runFridgeFile(document: vscode.TextDocument): void {
     if (document.isDirty) {
