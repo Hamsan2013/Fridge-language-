@@ -1,14 +1,18 @@
 {
   "name": "fridge-language",
   "displayName": "FRIDGE Language Support",
-  "description": "Official syntax highlighting, icons, and runner for the FRIDGE programming language by Hamsan A.",
-  "version": "0.3.0",
+  "description": "Official IDE toolchain for FRIDGE programming language by Hamsan A.",
+  "version": "0.4.0",
   "publisher": "hamsan-a",
   "engines": {
     "vscode": "^1.75.0"
   },
   "categories": [
     "Programming Languages"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:fridge"
   ],
   "contributes": {
     "languages": [
@@ -29,6 +33,61 @@
         "scopeName": "source.frg",
         "path": "./syntaxes/fridge.tmLanguage.json"
       }
-    ]
+    ],
+    "commands": [
+      {
+        "command": "fridge.runFile",
+        "title": "FRIDGE: Run Current File",
+        "icon": "$(play)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "fridge.runFile",
+        "key": "ctrl+f5",
+        "mac": "cmd+f5",
+        "when": "editorLangId == fridge"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "fridge.runFile",
+          "when": "editorLangId == fridge",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "fridge.runFile",
+          "when": "editorLangId == fridge",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "FRIDGE Language",
+      "properties": {
+        "fridge.executablePath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path to the fridge executable."
+        },
+        "fridge.clearTerminalBeforeRun": {
+          "type": "boolean",
+          "default": true,
+          "description": "Clear the terminal before launching a FRIDGE program."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "tsc -p ./",
+    "compile": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0"
   }
 }
