@@ -1,52 +1,37 @@
 #pragma once
-#include "fridge/core/parser.hpp"
-#include <string>
+#include "fridge/core/ast.hpp"
+#include "fridge/runtime/environment.hpp"
+#include <memory>
 #include <unordered_map>
-#include <vector>
 
 namespace fridge {
 
-struct FunctionDef {
+struct FunctionObject {
     std::string name;
     std::vector<std::string> params;
-    std::vector<Statement> body;
+    std::vector<std::unique_ptr<Stmt>> body;
 };
 
 class Interpreter {
 public:
-    Interpreter();
-    int execute(const std::vector<Statement>& program);
+    explicit Interpreter(size_t max_instructions = 1000000);
 
-    // Variable Storage
-    void set_var(const std::string& name, const std::string& val);
-    std::string get_var(const std::string& name) const;
-    bool has_var(const std::string& name) const;
+    int execute(const std::vector<std::unique_ptr<Stmt>>& program);
+    Value evaluate(const Expr* expr);
+    void execute_statement(const Stmt* stmt);
 
-    // 1-Based List Storage
-    void set_list(const std::string& name, const std::vector<std::string>& items);
-    std::vector<std::string>& get_list(const std::string& name);
-    bool has_list(const std::string& name) const;
-
-    // Map Storage
-    void set_map_entry(const std::string& map_name, const std::string& key, const std::string& val);
-    std::string get_map_entry(const std::string& map_name, const std::string& key) const;
-
-    // Evaluation
-    std::string evaluate_tokens(const std::vector<Token>& tokens, size_t start_idx, size_t end_idx = 0);
-    bool evaluate_condition(const std::vector<Token>& tokens, size_t start_idx);
-
-    // Return state for functions
-    void trigger_return(const std::string& val) { return_value_ = val; returning_ = true; }
-    bool is_returning() const { return returning_; }
+    std::shared_ptr<Environment> environment() { return env_; }
 
 private:
-    std::unordered_map<std::string, std::string> variables_;
-    std::unordered_map<std::string, std::vector<std::string>> lists_;
-    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> maps_;
-    std::unordered_map<std::string, FunctionDef> functions_;
+    std::shared_ptr<Environment> env_;
+    std::shared_ptr<Environment> globals_;
+    std::unordered_map<std::string, std::shared_ptr<FunctionObject>> functions_;
 
     bool returning_ = false;
-    std::string return_value_;
+    Value return_value_;
+
+    size_t instruction_count_ = 0;
+    size_t max_instructions_ = 1000000;
 };
 
 } // namespace fridge
