@@ -1,10 +1,14 @@
 {
-  "name": "fridge-language",
+  "name": "fridge-lang",
   "displayName": "FRIDGE Language Support",
-  "description": "Official IDE toolchain for FRIDGE programming language by Hamsan A.",
+  "description": "Official language support, syntax highlighting, and runner for FRIDGE.",
   "version": "0.4.0",
-  "publisher": "AD-Developers",
+  "publisher": "ADDevelopers",
   "icon": "icons/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hamsan2013/Fridge-language-"
+  },
   "engines": {
     "vscode": "^1.75.0"
   },
@@ -23,8 +27,8 @@
         "extensions": [".frg", ".uzip"],
         "configuration": "./language-configuration.json",
         "icon": {
-          "light": "./icons/fridge.ico",
-          "dark": "./icons/fridge.ico"
+          "light": "./icons/icon.png",
+          "dark": "./icons/icon.png"
         }
       }
     ],
