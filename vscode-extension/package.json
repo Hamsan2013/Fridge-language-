@@ -3,7 +3,7 @@
   "displayName": "FRIDGE Language Support",
   "description": "Official language support, syntax highlighting, and runner for FRIDGE.",
   "version": "0.4.0",
-  "publisher": "ADDevelopers",
+  "publisher": "AD-Developers",
   "icon": "icons/icon.png",
   "repository": {
     "type": "git",
