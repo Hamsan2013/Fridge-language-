@@ -39,7 +39,11 @@ export function findFridgeExecutable(): string | null {
     }
 
     try {
-        const cmd = process.platform === 'win32' ? 'where fridge' : 'which fridge';
+            // ✅ FIXED CODE IN runner.ts:
+            const cmd = process.platform === 'win32'
+             ? `& "${exe}" run "${filePath}"`
+              : `"${exe}" run "${filePath}"`;
+terminal.sendText(cmd);
         const result = execSync(cmd, { stdio: ['pipe', 'pipe', 'ignore'] })
             .toString()
             .trim()
