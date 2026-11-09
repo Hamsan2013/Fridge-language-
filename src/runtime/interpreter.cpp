@@ -81,8 +81,8 @@ Value Interpreter::evaluate(const Expr* expr) {
         env_ = fn_env;
         returning_ = false;
 
-        for (const auto& s : fn->body) {
-            execute_statement(s.get());
+        for (const auto* s : fn->body) {
+            execute_statement(s);
             if (returning_) break;
         }
 
@@ -219,8 +219,7 @@ void Interpreter::execute_statement(const Stmt* stmt) {
         obj->name = fn->name;
         obj->params = fn->parameters;
         for (const auto& s : fn->body) {
-            // Transfer ownership to function object
-            // Body statements are cloned or moved in real AST
+            obj->body.push_back(s.get());
         }
         functions_[fn->name] = obj;
         return;
