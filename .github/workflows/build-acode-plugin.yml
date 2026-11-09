@@ -1,0 +1,58 @@
+name: Build FRIDGE Acode Plugin
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "acode-plugin/**"
+      - ".github/workflows/build-acode-plugin.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package Acode plugin ZIP
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate plugin files
+        run: |
+          test -f acode-plugin/plugin.json
+          test -f acode-plugin/main.js
+          test -f acode-plugin/readme.md
+          python3 -m json.tool acode-plugin/plugin.json > /dev/null
+
+      - name: Build plugin ZIP
+        run: |
+          mkdir -p dist
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+
+          source = Path("acode-plugin")
+          output = Path("dist/FRIDGE-Acode-Plugin.zip")
+          required = ["plugin.json", "main.js", "readme.md"]
+          with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+              for name in required:
+                  path = source / name
+                  if not path.is_file():
+                      raise SystemExit(f"Missing required plugin file: {path}")
+                  archive.write(path, arcname=name)
+          with ZipFile(output) as archive:
+              names = set(archive.namelist())
+              for name in required:
+                  if name not in names:
+                      raise SystemExit(f"ZIP is missing root file: {name}")
+          print(f"Created {output} ({output.stat().st_size} bytes)")
+          PY
+
+      - name: Upload installable Acode plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: FRIDGE-Acode-Plugin
+          path: dist/FRIDGE-Acode-Plugin.zip
+          if-no-files-found: error
+          retention-days: 30
