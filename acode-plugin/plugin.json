@@ -1,0 +1,18 @@
+{
+  "$schema": "https://acode.app/schema/plugin/v0.1.0.json",
+  "id": "com.hamsan.fridge",
+  "name": "FRIDGE Language Support",
+  "main": "main.js",
+  "version": "0.1.0",
+  "description": "Basic FRIDGE language file support for Acode.",
+  "repository": "https://github.com/Hamsan2013/Fridge-language-",
+  "icon": "icon.png",
+  "minVersionCode": 958,
+  "license": "MIT",
+  "keywords": ["fridge", "programming language", "syntax", "frg"],
+  "price": 0,
+  "author": {
+    "name": "Hamsan A",
+    "github": "Hamsan2013"
+  }
+}
