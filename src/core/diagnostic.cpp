@@ -1,4 +1,3 @@
-#pragma once
 #include "fridge/core/token.hpp"
 #include <iostream>
 #include <string>
