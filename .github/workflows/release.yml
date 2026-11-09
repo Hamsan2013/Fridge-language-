@@ -42,6 +42,20 @@ jobs:
           npx @vscode/vsce package --allow-missing-repository --out ../dist/fridge-language-0.4.0.vsix
           cd ..
 
+      - name: Build Inno Setup Installer
+        shell: pwsh
+        run: |
+          # Install Inno Setup via choco
+          choco install innosetup -y
+          
+          # Compile the installer script
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging/windows/fridge_installer.iss
+          
+          # Copy the generated installer into bundle
+          if (Test-Path "dist\FRIDGE-Setup-v0.4.0.exe") {
+            Copy-Item "dist\FRIDGE-Setup-v0.4.0.exe" -Destination "bundle\"
+          }
+
       - name: Create Clean Distribution Folder
         shell: pwsh
         run: |
