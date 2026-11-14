@@ -1,0 +1,52 @@
+name: Build VS Code Extension (.vsix)
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'vscode-extension/**'
+      - '.github/workflows/vscode-extension.yml'
+  workflow_dispatch:
+
+jobs:
+  build-vsix:
+    name: Package VS Code Extension
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'vscode-extension/package-lock.json'
+
+      - name: Read Version from package.json
+        id: ver
+        run: |
+          VERSION=$(node -p "require('./vscode-extension/package.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Packaging VS Code Extension v$VERSION"
+
+      - name: Copy LICENSE.md into vscode-extension
+        run: |
+          if [ -f "LICENSE.md" ]; then
+            cp LICENSE.md vscode-extension/LICENSE.md
+          fi
+
+      - name: Compile & Package .vsix
+        working-directory: vscode-extension
+        run: |
+          npm install
+          npm run vscode:prepublish
+          npx @vscode/vsce package --out "fridge-language-${{ steps.ver.outputs.VERSION }}.vsix"
+
+      - name: Upload .vsix Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fridge-language-${{ steps.ver.outputs.VERSION }}-vsix
+          path: vscode-extension/fridge-language-${{ steps.ver.outputs.VERSION }}.vsix
+          if-no-files-found: error
