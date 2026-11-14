@@ -21,8 +21,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: 'vscode-extension/package-lock.json'
 
       - name: Read Version from package.json
         id: ver
@@ -42,11 +40,11 @@ jobs:
         run: |
           npm install
           npm run vscode:prepublish
-          npx @vscode/vsce package --out "fridge-language-${{ steps.ver.outputs.VERSION }}.vsix"
+          npx @vscode/vsce package --out "fridge-lang-${{ steps.ver.outputs.VERSION }}.vsix"
 
       - name: Upload .vsix Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fridge-language-${{ steps.ver.outputs.VERSION }}-vsix
-          path: vscode-extension/fridge-language-${{ steps.ver.outputs.VERSION }}.vsix
+          name: fridge-lang-${{ steps.ver.outputs.VERSION }}-vsix
+          path: vscode-extension/fridge-lang-${{ steps.ver.outputs.VERSION }}.vsix
           if-no-files-found: error
