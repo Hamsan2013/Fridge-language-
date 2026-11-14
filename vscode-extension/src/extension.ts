@@ -1,30 +1,22 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
-import * as fs from 'fs';
 import { runFridgeFile } from './runner';
-import { updateDiagnostics } from './diagnostics';
+import { setupDiagnostics } from './diagnostics';
+import { registerProviders } from './providers';
 
-export function activate(context: vscode.ExtensionContext) {
-    const diagnosticCollection = vscode.languages.createDiagnosticCollection('fridge');
-    context.subscriptions.push(diagnosticCollection);
-
-    // Register Execution Command
-    const runDisposable = vscode.commands.registerCommand('fridge.runFile', () => {
+export function activate(context: vscode.ExtensionContext): void {
+    const runCommand = vscode.commands.registerCommand('fridge.runFile', () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
-            vscode.window.showErrorMessage('No active FRIDGE editor tab open.');
+            vscode.window.showWarningMessage('Open a .frg file first to run FRIDGE.');
             return;
         }
         runFridgeFile(editor.document);
     });
-    context.subscriptions.push(runDisposable);
 
-    // Register On-Save Document Validator for Problems Panel
-    vscode.workspace.onDidSaveTextDocument((document) => {
-        if (document.languageId === 'fridge') {
-            updateDiagnostics(document, diagnosticCollection);
-        }
-    }, null, context.subscriptions);
+    context.subscriptions.push(runCommand);
+
+    setupDiagnostics(context);
+    registerProviders(context);
 }
 
-export function deactivate() {}
+export function deactivate(): void {}
