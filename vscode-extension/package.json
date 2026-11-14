@@ -4,6 +4,7 @@
   "description": "Official language support, multi-color syntax highlighting, live error checking, hover previews, and 2D/3D engine runner for FRIDGE v0.5.0.",
   "version": "0.5.0",
   "publisher": "AD-Developers",
+  "license": "SEE LICENSE IN LICENSE.md",
   "icon": "icons/icon.png",
   "repository": {
     "type": "git",
