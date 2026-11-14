@@ -53,57 +53,17 @@ jobs:
         shell: pwsh
         run: |
           $ver = "${{ steps.ver.outputs.VERSION }}"
-          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          New-Item -ItemType Directory -Force -Path "dist\bin" | Out-Null
 
           $exePath = Get-ChildItem -Path build -Recurse -Filter "fridge.exe" | Select-Object -First 1 -ExpandProperty FullName
           if (-not $exePath) { throw "fridge.exe was not found in build output!" }
-          Copy-Item $exePath "dist\fridge.exe" -Force
+          Copy-Item $exePath "dist\bin\fridge.exe" -Force
           Copy-Item "vscode-extension\fridge-language-$ver.vsix" "dist\fridge-language-$ver.vsix" -Force
 
-          # Locate existing .iss script anywhere in repo, or generate a clean one
-          $issFile = Get-ChildItem -Path . -Recurse -Filter "*.iss" | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $issFile) {
-            $issFile = "$PWD\fridge_auto.iss"
-            @"
-          [Setup]
-          AppName=FRIDGE Programming Language
-          AppVersion=$ver
-          AppPublisher=Hamsan (AD Developers)
-          DefaultDirName={autopf}\FRIDGE
-          DefaultGroupName=FRIDGE
-          OutputDir=dist
-          OutputBaseFilename=FRIDGE-Setup-v$ver
-          Compression=lzma2
-          SolidCompression=yes
-          ChangesEnvironment=yes
-
-          [Files]
-          Source: "dist\fridge.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
-          Source: "LICENSE.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-
-          [Registry]
-          Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\bin"; Check: NeedsAddPath('{app}\bin')
-
-          [Code]
-          function NeedsAddPath(Param: string): boolean;
-          var
-            OrigPath: string;
-          begin
-            if not RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', OrigPath) then
-            begin
-              Result := True;
-              exit;
-            end;
-            Result := Pos(';' + Param + ';', ';' + OrigPath + ';') = 0;
-          end;
-          "@ | Set-Content -Path $issFile -Encoding UTF8
-          }
-
-          iscc "/DMyAppVersion=$ver" "/Odist" "/FFRIDGE-Setup-v$ver" "$issFile"
+          iscc "packaging\windows\fridge_installer.iss"
           if (-not (Test-Path "dist\FRIDGE-Setup-v$ver.exe")) {
             throw "Inno Setup failed to produce dist\FRIDGE-Setup-v$ver.exe!"
           }
-
       - name: Upload Windows Installer & VS Code Plugin
         uses: actions/upload-artifact@v4
         with:
@@ -132,7 +92,7 @@ jobs:
           VER="${{ steps.ver.outputs.VERSION }}"
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --config Release
-          mkdir -p pkg-deb/DEBIAN pkg-deb/usr/local/bin
+           mkdir -p pkg-deb/DEBIAN pkg-deb/usr/local/bin
           find build -name "fridge" -type f -executable -exec cp {} pkg-deb/usr/local/bin/fridge \;
           chmod 755 pkg-deb/usr/local/bin/fridge
           printf "Package: fridge-lang\nVersion: %s\nSection: devel\nPriority: optional\nArchitecture: amd64\nMaintainer: Hamsan (AD Developers)\nDescription: Official FRIDGE Programming Language Interpreter\n" "$VER" > pkg-deb/DEBIAN/control
