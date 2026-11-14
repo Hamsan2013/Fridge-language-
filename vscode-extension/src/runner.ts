@@ -16,6 +16,7 @@ export function findFridgeExecutable(): string | null {
     const commonPaths: string[] = [];
     if (process.platform === 'win32') {
         const userProfile = process.env.USERPROFILE || '';
+        const localAppData = process.env.LOCALAPPDATA || '';
         const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
         const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
 
@@ -23,6 +24,7 @@ export function findFridgeExecutable(): string | null {
             path.join(programFiles, 'FRIDGE', 'bin', 'fridge.exe'),
             path.join(programFilesX86, 'FRIDGE', 'bin', 'fridge.exe'),
             path.join(userProfile, 'Downloads', 'FRIDGE-Windows-Installer-and-Plugin', 'fridge.exe'),
+            path.join(localAppData, 'Programs', 'FRIDGE', 'fridge.exe'),
             'C:\\FRIDGE\\bin\\fridge.exe'
         );
     } else {

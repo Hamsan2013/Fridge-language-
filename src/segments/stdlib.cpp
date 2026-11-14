@@ -1,5 +1,6 @@
 #include "fridge/segments/registry.hpp"
 #include "fridge/runtime/interpreter.hpp"
+#include "fridge/runtime/value.hpp"
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -28,7 +29,7 @@ void register_all_segments() {
         if (args.size() >= 4 && args[1] == "into" && args[2] == "file") {
             std::ofstream out(args[3]);
             Value val = interp.environment()->get(args[0]);
-            out << val.to_string();
+            out << val.toString();
         }
     });
 
