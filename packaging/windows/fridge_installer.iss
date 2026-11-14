@@ -1,6 +1,6 @@
 [Setup]
 AppName=FRIDGE Programming Language
-AppVersion={#MyAppVersion}
+AppVersion=v0.5.0
 AppPublisher=Hamsan A
 DefaultDirName={autopf}\FRIDGE
 DefaultGroupName=FRIDGE
