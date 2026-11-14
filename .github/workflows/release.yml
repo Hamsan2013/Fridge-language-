@@ -3,13 +3,12 @@ name: Build, Package & Upload FRIDGE
 on:
   push:
     branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  build-and-upload:
+  build-windows:
     name: Build fridge.exe and VS Code Extension
     runs-on: windows-latest
 
@@ -17,73 +16,131 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup MSVC Compiler
-        uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Setup Node.js for VS Code Extension
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20'
 
-      - name: Configure CMake
-        run: |
-          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=dist
-
-      - name: Compile fridge.exe
-        run: |
-          cmake --build build --config Release --target install
-
-      - name: Build Inno Setup Installer
+      - name: Extract Version from package.json
+        id: ver
         shell: pwsh
         run: |
-          choco install innosetup -y
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging/windows/fridge_installer.iss
+          $pkg = Get-Content "vscode-extension/package.json" | ConvertFrom-Json
+          $version = $pkg.version
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+          echo "Detected FRIDGE version: v$version"
 
-      - name: Package VS Code Extension (.vsix)
+      - name: Configure CMake (FRIDGE v${{ steps.ver.outputs.VERSION }})
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build fridge.exe
+        run: cmake --build build --config Release
+
+      - name: Ensure LICENSE.md is inside vscode-extension
         shell: pwsh
         run: |
-          cd vscode-extension
+          if (Test-Path "LICENSE.md") {
+            Copy-Item "LICENSE.md" "vscode-extension/LICENSE.md" -Force
+          }
+
+      - name: Install Dependencies & Package VS Code Extension (.vsix)
+        working-directory: vscode-extension
+        run: |
           npm install
-          npm install -g @vscode/vsce
-          npx @vscode/vsce package --allow-missing-repository --out ../dist/fridge-language-0.4.0.vsix
-          cd ..
+          npm run vscode:prepublish
+          npx @vscode/vsce package --out "fridge-language-${{ steps.ver.outputs.VERSION }}.vsix"
 
-      - name: Create Clean Distribution Folder
+      - name: Stage Windows Release Bundle (v${{ steps.ver.outputs.VERSION }})
         shell: pwsh
         run: |
-          # 1. Create the bundle directory first
-          New-Item -ItemType Directory -Force -Path bundle
+          $ver = "${{ steps.ver.outputs.VERSION }}"
+          $stage = "release-bundle"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
-          # 2. Copy the standalone CLI compiler/interpreter
-          if (Test-Path "dist\bin\fridge.exe") {
-            Copy-Item -Path "dist\bin\fridge.exe" -Destination "bundle\"
-          }
+          $exePath = Get-ChildItem -Path build -Recurse -Filter "fridge.exe" | Select-Object -First 1 -ExpandProperty FullName
+          Copy-Item $exePath "$stage\fridge.exe" -Force
+          Copy-Item "vscode-extension\fridge-language-$ver.vsix" "$stage\fridge-language-$ver.vsix" -Force
+          if (Test-Path "LICENSE.md") { Copy-Item "LICENSE.md" "$stage\LICENSE.md" -Force }
+          if (Test-Path "README.md") { Copy-Item "README.md" "$stage\README.md" -Force }
+          if (Test-Path "examples") { Copy-Item "examples" "$stage\examples" -Recurse -Force }
 
-          # 3. Copy the Windows Inno Setup installer wizard
-          if (Test-Path "dist\FRIDGE-Setup-v0.4.0.exe") {
-            Copy-Item -Path "dist\FRIDGE-Setup-v0.4.0.exe" -Destination "bundle\"
-          }
+      - name: Build Windows Installer (Inno Setup)
+        if: hashFiles('installer/*.iss') != ''
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.ver.outputs.VERSION }}"
+          $issFile = Get-ChildItem -Path installer -Filter "*.iss" | Select-Object -First 1 -ExpandProperty FullName
+          iscc "/DMyAppVersion=$ver" "/Orelease-bundle" "/FFRIDGE-Setup-v$ver" "$issFile"
 
-          # 4. Copy the VS Code plugin (.vsix)
-          if (Test-Path "dist\fridge-language-0.4.0.vsix") {
-            Copy-Item -Path "dist\fridge-language-0.4.0.vsix" -Destination "bundle\"
-          }
+      - name: Create Combined Windows ZIP Bundle
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.ver.outputs.VERSION }}"
+          Compress-Archive -Path "release-bundle\*" -DestinationPath "FRIDGE-Windows-Installer-and-Plugin-v$ver.zip" -Force
 
-          # 5. Copy icons and batch scripts
-          if (Test-Path "resources\fridge.ico") {
-            Copy-Item -Path "resources\fridge.ico" -Destination "bundle\"
-          }
-          if (Test-Path "packaging\windows\register_frg_icon.bat") {
-            Copy-Item -Path "packaging\windows\register_frg_icon.bat" -Destination "bundle\"
-          }
-          if (Test-Path "tests\golden") {
-            Copy-Item -Recurse -Path "tests\golden" -Destination "bundle\examples"
-          }
-
-      - name: Upload Artifacts (Downloadable ZIP)
+      - name: Upload Windows Artifacts (v${{ steps.ver.outputs.VERSION }})
         uses: actions/upload-artifact@v4
         with:
-          name: FRIDGE-Windows-Installer-and-Plugin
-          path: bundle/
-          if-no-files-found: error
-          retention-days: 30
+          name: FRIDGE-Windows-Installer-and-Plugin-v${{ steps.ver.outputs.VERSION }}
+          path: |
+            release-bundle/fridge.exe
+            release-bundle/fridge-language-${{ steps.ver.outputs.VERSION }}.vsix
+            release-bundle/FRIDGE-Setup-v${{ steps.ver.outputs.VERSION }}.exe
+            FRIDGE-Windows-Installer-and-Plugin-v${{ steps.ver.outputs.VERSION }}.zip
+          if-no-files-found: warn
+
+  build-linux:
+    name: Build FRIDGE for Linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Extract Version
+        id: ver
+        run: |
+          VERSION=$(node -p "require('./vscode-extension/package.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build fridge (Linux)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
+          mkdir -p dist-linux
+          find build -name "fridge" -type f -executable -exec cp {} dist-linux/ \;
+          tar -czvf FRIDGE-Linux-v${{ steps.ver.outputs.VERSION }}.tar.gz -C dist-linux .
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FRIDGE-Linux-v${{ steps.ver.outputs.VERSION }}
+          path: FRIDGE-Linux-v${{ steps.ver.outputs.VERSION }}.tar.gz
+
+  build-macos:
+    name: Build FRIDGE for macOS
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Extract Version
+        id: ver
+        run: |
+          VERSION=$(node -p "require('./vscode-extension/package.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build fridge (macOS)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
+          mkdir -p dist-macos
+          find build -name "fridge" -type f -perm +111 -exec cp {} dist-macos/ \;
+          tar -czvf FRIDGE-macOS-v${{ steps.ver.outputs.VERSION }}.tar.gz -C dist-macos .
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FRIDGE-macOS-v${{ steps.ver.outputs.VERSION }}
+          path: FRIDGE-macOS-v${{ steps.ver.outputs.VERSION }}.tar.gz
