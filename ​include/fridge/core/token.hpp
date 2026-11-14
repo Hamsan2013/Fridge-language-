@@ -1,52 +1,84 @@
 #pragma once
 #include <string>
-#include <string_view>
 
 namespace fridge {
 
 enum class TokenType {
+    // Symbols & Brackets (v0.5.0)
+    LBRACE,      // {
+    RBRACE,      // }
+    LPAREN,      // (
+    RPAREN,      // )
+    COMMA,       // ,
+    PLUS,        // +
+    MINUS,       // -
+    STAR,        // *
+    SLASH,       // /
+
     // Literals & Identifiers
-    Identifier,
-    NumberLiteral,
-    StringLiteral,
-    BooleanLiteral,
-    NothingLiteral,
+    IDENTIFIER,
+    STRING,
+    NUMBER,
+    BOOLEAN,
+    NOTHING,
 
-    // Keywords
-    Remember, As, Set, To, Becomes, Show, Ask, Into,
-    If, Otherwise, End, Repeat, Times, While, For, Each, In,
-    Create, Function, Called, Taking, And, Returning, Return, Call, With,
-    Listen, When, Child, Add, Subtract, Multiply, Divide, By, From,
-    List, Map, Containing, First, Last, Item, Of, NumberOf,
-    Wait, Seconds, Milliseconds, Save, Read, File, Random, Between,
-    Break, Continue,
+    // Core Keywords & Shorthands
+    REMEMBER,    // remember, rem
+    AS,          // as
+    SET,         // set
+    TO,          // to
+    SHOW,        // show
+    ASK,         // ask
+    JOINED,      // joined
+    WITH,        // with
 
-    // Operators
-    Plus, Minus, MultipliedBy, DividedBy, Modulo,
-    Is, IsNot, GreaterThan, LessThan, AtLeast, AtMost, EqualTo,
-    JoinedWith, Not, Or,
+    // Control Flow & Functions
+    IF,          // if
+    IS,          // is
+    OTHERWISE,   // otherwise
+    REPEAT,      // repeat
+    TIMES,       // times
+    WHILE,       // while
+    FUNCTION,    // fnc, function
+    CALLED,      // called
+    RETURNING,   // returning
+    END,         // end (legacy compatibility)
 
-    // Delimiters
-    Newline,
-    LeftBrace, RightBrace,
-    LeftParen, RightParen,
-    Comma,
-    Colon,
-    EndOfFile
-};
+    // Error Handling & Critical Keywords (Red)
+    ATTEMPT,     // attempt
+    ERROR,       // error
+    STOP,        // stop
+    EXIT,        // exit
+    DELETE_KW,   // delete, del
 
-struct SourceLocation {
-    std::string filename;
-    int line = 1;
-    int column = 1;
+    // File System & 2D/3D Engine
+    CREATE,      // create
+    READ,        // read
+    ADD,         // add
+    FILE_KW,     // file
+    INTO,        // into
+    FROM,        // from
+    LOAD,        // load
+    MODEL,       // model
+    OBJ,         // OBJ
+    SPRITE,      // SPRITE
+    DRAW,        // draw
+    RECTANGLE,   // rectangle
+    CIRCLE,      // circle
+    AT,          // at
+    WIDTH,       // width
+    HEIGHT,      // height
+    RADIUS,      // radius
+    COLOR,       // color
+
+    END_OF_FILE
 };
 
 struct Token {
     TokenType type;
     std::string lexeme;
-    SourceLocation location;
+    int line = 1;
+    int column = 1;
 };
-
-std::string_view token_type_name(TokenType type);
 
 } // namespace fridge
