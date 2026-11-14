@@ -3,28 +3,13 @@
 
 namespace fridge {
 
-enum class BackendType {
-    Console,
-    DesktopUI,
-    Game2D,
-    Game3D
-};
-
-class BackendInterface {
+class Backend {
 public:
-    virtual ~BackendInterface() = default;
-    virtual void initialize() = 0;
-    virtual void shutdown() = 0;
-    virtual BackendType type() const = 0;
+    static void spawn3DNode(const std::string& name);
+    static void load3DModelAsset(const std::string& assetPath, const std::string& objectName);
+    static void draw2DRect(const std::string& x, const std::string& y, const std::string& w, const std::string& h, const std::string& color);
+    static void draw2DCircle(const std::string& x, const std::string& y, const std::string& r, const std::string& color);
+    static void spawn2DSprite(const std::string& id, const std::string& x, const std::string& y);
 };
-
-class ConsoleBackend : public BackendInterface {
-public:
-    void initialize() override {}
-    void shutdown() override {}
-    BackendType type() const override { return BackendType::Console; }
-};
-
-void init_active_backend(BackendType type);
 
 } // namespace fridge
