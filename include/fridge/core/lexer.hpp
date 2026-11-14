@@ -1,5 +1,6 @@
 #pragma once
 #include "fridge/core/token.hpp"
+#include "fridge/core/diagnostic.hpp"
 #include <string>
 #include <vector>
 
@@ -7,18 +8,25 @@ namespace fridge {
 
 class Lexer {
 public:
-    explicit Lexer(std::string source);
+    Lexer(const std::string& source, DiagnosticEngine& diag);
     std::vector<Token> tokenize();
 
 private:
-    std::string source_;
-    size_t pos_ = 0;
-    int line_ = 1;
-    int col_ = 1;
+    std::string src;
+    DiagnosticEngine& diagnostics;
+    size_t pos = 0;
+    int line = 1;
+    int col = 1;
 
+    bool isAtEnd() const;
     char peek() const;
+    char peekNext() const;
     char advance();
-    bool is_at_end() const;
+    void skipWhitespaceAndComments();
+    Token readString();
+    Token readNumber();
+    Token readIdentifierOrKeyword();
+    static std::string toLower(const std::string& s);
 };
 
 } // namespace fridge
