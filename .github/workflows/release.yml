@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-windows:
-    name: Build fridge.exe, Installer & VS Code Extension
+    name: Build Windows Installer & VS Code Extension
     runs-on: windows-latest
 
     steps:
@@ -30,11 +30,10 @@ jobs:
           echo "VERSION=$version" >> $env:GITHUB_OUTPUT
           echo "Detected FRIDGE version: v$version"
 
-      - name: Configure CMake (FRIDGE v${{ steps.ver.outputs.VERSION }})
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build fridge.exe
-        run: cmake --build build --config Release
+      - name: Configure & Build fridge.exe (v${{ steps.ver.outputs.VERSION }})
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
 
       - name: Ensure LICENSE.md is inside vscode-extension
         shell: pwsh
@@ -43,51 +42,76 @@ jobs:
             Copy-Item "LICENSE.md" "vscode-extension/LICENSE.md" -Force
           }
 
-      - name: Install Dependencies & Package VS Code Extension (.vsix)
+      - name: Build VS Code Extension (.vsix)
         working-directory: vscode-extension
         run: |
           npm install
           npm run vscode:prepublish
           npx @vscode/vsce package --out "fridge-language-${{ steps.ver.outputs.VERSION }}.vsix"
 
-      - name: Stage Windows Release Bundle (v${{ steps.ver.outputs.VERSION }})
+      - name: Build Windows Setup Installer (FRIDGE-Setup-v${{ steps.ver.outputs.VERSION }}.exe)
         shell: pwsh
         run: |
           $ver = "${{ steps.ver.outputs.VERSION }}"
-          $stage = "release-bundle"
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
 
           $exePath = Get-ChildItem -Path build -Recurse -Filter "fridge.exe" | Select-Object -First 1 -ExpandProperty FullName
-          Copy-Item $exePath "$stage\fridge.exe" -Force
-          Copy-Item "vscode-extension\fridge-language-$ver.vsix" "$stage\fridge-language-$ver.vsix" -Force
-          if (Test-Path "LICENSE.md") { Copy-Item "LICENSE.md" "$stage\LICENSE.md" -Force }
-          if (Test-Path "README.md") { Copy-Item "README.md" "$stage\README.md" -Force }
-          if (Test-Path "examples") { Copy-Item "examples" "$stage\examples" -Recurse -Force }
+          if (-not $exePath) { throw "fridge.exe was not found in build output!" }
+          Copy-Item $exePath "dist\fridge.exe" -Force
+          Copy-Item "vscode-extension\fridge-language-$ver.vsix" "dist\fridge-language-$ver.vsix" -Force
 
-      - name: Build Windows Installer (Inno Setup)
-        if: hashFiles('installer/*.iss') != ''
-        shell: pwsh
-        run: |
-          $ver = "${{ steps.ver.outputs.VERSION }}"
-          $issFile = Get-ChildItem -Path installer -Filter "*.iss" | Select-Object -First 1 -ExpandProperty FullName
-          iscc "/DMyAppVersion=$ver" "/Orelease-bundle" "/FFRIDGE-Setup-v$ver" "$issFile"
+          # Locate existing .iss script anywhere in repo, or generate a clean one
+          $issFile = Get-ChildItem -Path . -Recurse -Filter "*.iss" | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $issFile) {
+            $issFile = "$PWD\fridge_auto.iss"
+            @"
+          [Setup]
+          AppName=FRIDGE Programming Language
+          AppVersion=$ver
+          AppPublisher=Hamsan (AD Developers)
+          DefaultDirName={autopf}\FRIDGE
+          DefaultGroupName=FRIDGE
+          OutputDir=dist
+          OutputBaseFilename=FRIDGE-Setup-v$ver
+          Compression=lzma2
+          SolidCompression=yes
+          ChangesEnvironment=yes
 
-      - name: Create Combined Windows ZIP Bundle
-        shell: pwsh
-        run: |
-          $ver = "${{ steps.ver.outputs.VERSION }}"
-          Compress-Archive -Path "release-bundle\*" -DestinationPath "FRIDGE-Windows-Installer-and-Plugin-v$ver.zip" -Force
+          [Files]
+          Source: "dist\fridge.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
+          Source: "LICENSE.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
-      - name: Upload Windows Artifacts (v${{ steps.ver.outputs.VERSION }})
+          [Registry]
+          Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\bin"; Check: NeedsAddPath('{app}\bin')
+
+          [Code]
+          function NeedsAddPath(Param: string): boolean;
+          var
+            OrigPath: string;
+          begin
+            if not RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', OrigPath) then
+            begin
+              Result := True;
+              exit;
+            end;
+            Result := Pos(';' + Param + ';', ';' + OrigPath + ';') = 0;
+          end;
+          "@ | Set-Content -Path $issFile -Encoding UTF8
+          }
+
+          iscc "/DMyAppVersion=$ver" "/Odist" "/FFRIDGE-Setup-v$ver" "$issFile"
+          if (-not (Test-Path "dist\FRIDGE-Setup-v$ver.exe")) {
+            throw "Inno Setup failed to produce dist\FRIDGE-Setup-v$ver.exe!"
+          }
+
+      - name: Upload Windows Installer & VS Code Plugin
         uses: actions/upload-artifact@v4
         with:
           name: FRIDGE-Windows-Installer-and-Plugin-v${{ steps.ver.outputs.VERSION }}
           path: |
-            release-bundle/fridge.exe
-            release-bundle/fridge-language-${{ steps.ver.outputs.VERSION }}.vsix
-            release-bundle/FRIDGE-Setup-v${{ steps.ver.outputs.VERSION }}.exe
-            FRIDGE-Windows-Installer-and-Plugin-v${{ steps.ver.outputs.VERSION }}.zip
-          if-no-files-found: warn
+            dist/FRIDGE-Setup-v${{ steps.ver.outputs.VERSION }}.exe
+            dist/fridge-language-${{ steps.ver.outputs.VERSION }}.vsix
+          if-no-files-found: error
 
   build-linux:
     name: Build FRIDGE Binary & .deb Installer for Linux
@@ -103,38 +127,22 @@ jobs:
           VERSION=$(node -p "require('./vscode-extension/package.json').version")
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Build fridge Binary (Linux)
-        run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --config Release
-          mkdir -p dist-linux
-          find build -name "fridge" -type f -executable -exec cp {} dist-linux/ \;
-          tar -czvf FRIDGE-Linux-v${{ steps.ver.outputs.VERSION }}.tar.gz -C dist-linux .
-
-      - name: Build Linux .deb Installer
+      - name: Build fridge & .deb Installer
         run: |
           VER="${{ steps.ver.outputs.VERSION }}"
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
           mkdir -p pkg-deb/DEBIAN pkg-deb/usr/local/bin
-          cp dist-linux/fridge pkg-deb/usr/local/bin/fridge
+          find build -name "fridge" -type f -executable -exec cp {} pkg-deb/usr/local/bin/fridge \;
           chmod 755 pkg-deb/usr/local/bin/fridge
-          cat <<EOF > pkg-deb/DEBIAN/control
-          Package: fridge-lang
-          Version: ${VER}
-          Section: devel
-          Priority: optional
-          Architecture: amd64
-          Maintainer: Hamsan (AD Developers)
-          Description: Official FRIDGE Programming Language Interpreter and Runtime
-          EOF
+          printf "Package: fridge-lang\nVersion: %s\nSection: devel\nPriority: optional\nArchitecture: amd64\nMaintainer: Hamsan (AD Developers)\nDescription: Official FRIDGE Programming Language Interpreter\n" "$VER" > pkg-deb/DEBIAN/control
           dpkg-deb --build pkg-deb "FRIDGE-Linux-v${VER}.deb"
 
-      - name: Upload Linux Artifacts (v${{ steps.ver.outputs.VERSION }})
+      - name: Upload Linux Installer
         uses: actions/upload-artifact@v4
         with:
           name: FRIDGE-Linux-Installer-v${{ steps.ver.outputs.VERSION }}
-          path: |
-            FRIDGE-Linux-v${{ steps.ver.outputs.VERSION }}.deb
-            FRIDGE-Linux-v${{ steps.ver.outputs.VERSION }}.tar.gz
+          path: FRIDGE-Linux-v${{ steps.ver.outputs.VERSION }}.deb
 
   build-macos:
     name: Build FRIDGE Binary & .pkg Installer for macOS
@@ -150,30 +158,18 @@ jobs:
           VERSION=$(node -p "require('./vscode-extension/package.json').version")
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Build fridge Binary (macOS)
-        run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --config Release
-          mkdir -p dist-macos
-          find build -name "fridge" -type f -perm +111 -exec cp {} dist-macos/ \;
-          tar -czvf FRIDGE-macOS-v${{ steps.ver.outputs.VERSION }}.tar.gz -C dist-macos .
-
-      - name: Build macOS .pkg Installer
+      - name: Build fridge & .pkg Installer
         run: |
           VER="${{ steps.ver.outputs.VERSION }}"
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
           mkdir -p pkg-mac/usr/local/bin
-          cp dist-macos/fridge pkg-mac/usr/local/bin/fridge
+          find build -name "fridge" -type f -perm +111 -exec cp {} pkg-mac/usr/local/bin/fridge \;
           chmod 755 pkg-mac/usr/local/bin/fridge
-          pkgbuild --root pkg-mac \
-            --identifier com.addevelopers.fridge \
-            --version "$VER" \
-            --install-location / \
-            "FRIDGE-macOS-v${VER}.pkg"
+          pkgbuild --root pkg-mac --identifier com.addevelopers.fridge --version "$VER" --install-location / "FRIDGE-macOS-v${VER}.pkg"
 
-      - name: Upload macOS Artifacts (v${{ steps.ver.outputs.VERSION }})
+      - name: Upload macOS Installer
         uses: actions/upload-artifact@v4
         with:
           name: FRIDGE-macOS-Installer-v${{ steps.ver.outputs.VERSION }}
-          path: |
-            FRIDGE-macOS-v${{ steps.ver.outputs.VERSION }}.pkg
-            FRIDGE-macOS-v${{ steps.ver.outputs.VERSION }}.tar.gz
+          path: FRIDGE-macOS-v${{ steps.ver.outputs.VERSION }}.pkg
