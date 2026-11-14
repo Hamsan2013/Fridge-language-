@@ -1,11 +1,11 @@
 [Setup]
 AppName=FRIDGE Programming Language
-AppVersion=0.4.0
+AppVersion={#MyAppVersion}
 AppPublisher=Hamsan A
 DefaultDirName={autopf}\FRIDGE
 DefaultGroupName=FRIDGE
 OutputDir=..\..\dist
-OutputBaseFilename=FRIDGE-Setup-v0.4.0
+OutputBaseFilename=FRIDGE-Setup-v0.5.0
 SetupIconFile=..\..\resources\fridge.ico
 Compression=lzma2
 SolidCompression=yes
