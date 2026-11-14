@@ -1,8 +1,8 @@
 {
   "name": "fridge-lang",
-  "displayName": "FRIDGE Language For VS Code",
-  "description": "Official language support, syntax highlighting, and runner for FRIDGE.",
-  "version": "0.4.0",
+  "displayName": "FRIDGE Language Support",
+  "description": "Official language support, multi-color syntax highlighting, live error checking, hover previews, and 2D/3D engine runner for FRIDGE v0.5.0.",
+  "version": "0.5.0",
   "publisher": "AD-Developers",
   "icon": "icons/icon.png",
   "repository": {
@@ -54,22 +54,24 @@
         "when": "editorLangId == fridge"
       }
     ],
-    "menus": {
-      "editor/title/run": [
-        {
-          "command": "fridge.runFile",
-          "when": "editorLangId == fridge",
-          "group": "navigation"
-        }
-      ],
-      "editor/context": [
-        {
-          "command": "fridge.runFile",
-          "when": "editorLangId == fridge",
-          "group": "navigation"
-        }
-      ]
-    },
+    "menus": [
+      {
+        "editor/title/run": [
+          {
+            "command": "fridge.runFile",
+            "when": "editorLangId == fridge",
+            "group": "navigation"
+          }
+        ],
+        "editor/context": [
+          {
+            "command": "fridge.runFile",
+            "when": "editorLangId == fridge",
+            "group": "navigation"
+          }
+        ]
+      }
+    ],
     "configuration": {
       "title": "FRIDGE Language",
       "properties": {
@@ -83,6 +85,53 @@
           "default": true,
           "description": "Clear the terminal before launching a FRIDGE program."
         }
+      }
+    },
+    "configurationDefaults": {
+      "editor.semanticHighlighting.enabled": true,
+      "editor.tokenColorCustomizations": {
+        "textMateRules": [
+          {
+            "scope": "invalid.illegal.danger.fridge",
+            "settings": { "foreground": "#FF4D4D", "fontStyle": "bold" }
+          },
+          {
+            "scope": "keyword.operator.twoletter.fridge",
+            "settings": { "foreground": "#FF5555", "fontStyle": "bold" }
+          },
+          {
+            "scope": "keyword.control.fridge",
+            "settings": { "foreground": "#C678DD", "fontStyle": "bold" }
+          },
+          {
+            "scope": "storage.type.fridge",
+            "settings": { "foreground": "#56B6C2", "fontStyle": "bold" }
+          },
+          {
+            "scope": "support.function.io.fridge",
+            "settings": { "foreground": "#E5C07B", "fontStyle": "bold" }
+          },
+          {
+            "scope": "support.class.engine.fridge",
+            "settings": { "foreground": "#2BBAC5", "fontStyle": "bold" }
+          },
+          {
+            "scope": "entity.name.function.fridge",
+            "settings": { "foreground": "#61AFEF", "fontStyle": "bold" }
+          },
+          {
+            "scope": "variable.other.fridge",
+            "settings": { "foreground": "#ABB2BF" }
+          },
+          {
+            "scope": "string.quoted.double.fridge",
+            "settings": { "foreground": "#E06C75" }
+          },
+          {
+            "scope": "constant.numeric.fridge, constant.language.fridge",
+            "settings": { "foreground": "#98C379" }
+          }
+        ]
       }
     }
   },
