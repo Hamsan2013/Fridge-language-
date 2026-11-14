@@ -26,10 +26,7 @@ export function findFridgeExecutable(): string | null {
             'C:\\FRIDGE\\bin\\fridge.exe'
         );
     } else {
-        commonPaths.push(
-            '/usr/local/bin/fridge',
-            '/usr/bin/fridge'
-        );
+        commonPaths.push('/usr/local/bin/fridge', '/usr/bin/fridge');
     }
 
     for (const testPath of commonPaths) {
@@ -39,21 +36,15 @@ export function findFridgeExecutable(): string | null {
     }
 
     try {
-        const lookupCommand = process.platform === 'win32'
-            ? 'where.exe fridge'
-            : 'which fridge';
-
-        const result = execSync(lookupCommand, { stdio: ['ignore', 'pipe', 'ignore'] })
+        const cmd = process.platform === 'win32' ? 'where fridge' : 'which fridge';
+        const result = execSync(cmd, { stdio: ['pipe', 'pipe', 'ignore'] })
             .toString()
             .trim()
             .split(/\r?\n/)[0];
-
         if (result && fs.existsSync(result)) {
             return result;
         }
-    } catch (_) {
-        // Ignore lookup errors and return null below.
-    }
+    } catch (_) {}
 
     return null;
 }
@@ -80,7 +71,6 @@ export function runFridgeFile(document: vscode.TextDocument): void {
     const workingDir = path.dirname(filePath);
     const fileContent = document.getText();
 
-    // Stop any previously running FRIDGE process
     if (activeProcess) {
         try {
             activeProcess.kill();
@@ -88,16 +78,12 @@ export function runFridgeFile(document: vscode.TextDocument): void {
         activeProcess = undefined;
     }
 
-    // 1. Open or Reveal the Dedicated FRIDGE Studio Output Window
     if (!outputPanel) {
         outputPanel = vscode.window.createWebviewPanel(
             'fridgeStudioOutput',
-            'FRIDGE Output & Engine',
+            'FRIDGE v0.5.0 Engine & Output',
             vscode.ViewColumn.Beside,
-            {
-                enableScripts: true,
-                retainContextWhenHidden: true
-            }
+            { enableScripts: true, retainContextWhenHidden: true }
         );
         outputPanel.onDidDispose(() => {
             outputPanel = undefined;
@@ -108,7 +94,6 @@ export function runFridgeFile(document: vscode.TextDocument): void {
 
     outputPanel.webview.html = getStudioHtml(path.basename(filePath));
 
-    // 2. If the script uses interactive 'ask', also run in the integrated terminal with '&'
     if (/\bask\b/i.test(fileContent)) {
         const terminal = vscode.window.terminals.find(t => t.name === 'FRIDGE Terminal')
             || vscode.window.createTerminal('FRIDGE Terminal');
@@ -120,15 +105,13 @@ export function runFridgeFile(document: vscode.TextDocument): void {
         terminal.sendText(cmd);
     }
 
-    // 3. Pre-scan source file for 2D/3D constructs so the visual engines respond immediately
-    const precommands = extractVisualConstructs(fileContent);
+    const precommands = extractVisualConstructs(fileContent, workingDir);
     for (const cmd of precommands) {
         if (outputPanel) {
             outputPanel.webview.postMessage(cmd);
         }
     }
 
-    // 4. Spawn fridge.exe and stream real-time stdout/stderr to the panel
     try {
         activeProcess = spawn(exe, ['run', filePath], { cwd: workingDir });
 
@@ -138,7 +121,7 @@ export function runFridgeFile(document: vscode.TextDocument): void {
                 if (!line.trim()) {
                     continue;
                 }
-                parseAndDispatchLine(line);
+                parseAndDispatchLine(line, workingDir);
             }
         });
 
@@ -160,38 +143,68 @@ export function runFridgeFile(document: vscode.TextDocument): void {
             }
             activeProcess = undefined;
         });
-
-        activeProcess.on('error', (err: Error) => {
-            if (outputPanel) {
-                outputPanel.webview.postMessage({ type: 'stderr', text: 'Failed to launch fridge.exe: ' + err.message });
-            }
-        });
     } catch (err: any) {
         vscode.window.showErrorMessage('Error running FRIDGE file: ' + (err?.message || String(err)));
     }
 }
 
-function parseAndDispatchLine(line: string): void {
+function loadObjGeometry(fullPath: string): { vertices: number[][]; edges: number[][] } | null {
+    if (!fs.existsSync(fullPath)) {
+        return null;
+    }
+    try {
+        const content = fs.readFileSync(fullPath, 'utf-8');
+        const vertices: number[][] = [];
+        const edges: number[][] = [];
+        const lines = content.split(/\r?\n/);
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('v ')) {
+                const parts = trimmed.split(/\s+/);
+                vertices.push([Number(parts[1]) || 0, Number(parts[2]) || 0, Number(parts[3]) || 0]);
+            } else if (trimmed.startsWith('f ')) {
+                const parts = trimmed.split(/\s+/).slice(1);
+                const indices = parts.map(p => parseInt(p.split('/')[0], 10) - 1).filter(n => !isNaN(n));
+                for (let i = 0; i < indices.length; i++) {
+                    const a = indices[i];
+                    const b = indices[(i + 1) % indices.length];
+                    if (a >= 0 && b >= 0) {
+                        edges.push([a, b]);
+                    }
+                }
+            }
+        }
+        return vertices.length > 0 ? { vertices, edges } : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function parseAndDispatchLine(line: string, workingDir: string): void {
     if (!outputPanel) {
         return;
     }
 
-    // Detect 3D engine output from fridge.exe
     const match3D = line.match(/Instantiated 3D scene node:\s*'(.*?)'/i);
     if (match3D) {
         outputPanel.webview.postMessage({ type: 'spawn3D', name: match3D[1] });
     }
 
-    // Detect 2D engine output from fridge.exe: [FRIDGE 2D] rect x y w h color
-    if (line.includes('[FRIDGE 2D')) {
-        outputPanel.webview.postMessage({ type: 'cmd2D', raw: line });
+    const matchModel = line.match(/\[FRIDGE 3D Asset\] Loaded model '(.*?)' as '(.*?)'/i);
+    if (matchModel) {
+        const fullPath = path.resolve(workingDir, matchModel[1]);
+        const meshData = loadObjGeometry(fullPath);
+        outputPanel.webview.postMessage({
+            type: 'spawn3D',
+            name: matchModel[2] + ' (' + path.basename(matchModel[1]) + ')',
+            mesh: meshData
+        });
     }
 
-    // Always send to the console log
     outputPanel.webview.postMessage({ type: 'stdout', text: line });
 }
 
-function extractVisualConstructs(source: string): Array<Record<string, any>> {
+function extractVisualConstructs(source: string, workingDir: string): Array<Record<string, any>> {
     const messages: Array<Record<string, any>> = [];
     const lines = source.split(/\r?\n/);
 
@@ -201,14 +214,24 @@ function extractVisualConstructs(source: string): Array<Record<string, any>> {
             continue;
         }
 
-        // Match: add OBJ <name>
         const objMatch = line.match(/^add\s+OBJ\s+([a-zA-Z0-9_]+)/i);
         if (objMatch) {
             messages.push({ type: 'spawn3D', name: objMatch[1] });
             continue;
         }
 
-        // Match: draw rectangle at X, Y with width W height H color "C"
+        const modelMatch = line.match(/^load\s+3d\s+model\s+from\s+"([^"]+)"\s+as\s+([a-zA-Z0-9_]+)/i);
+        if (modelMatch) {
+            const fullPath = path.resolve(workingDir, modelMatch[1]);
+            const meshData = loadObjGeometry(fullPath);
+            messages.push({
+                type: 'spawn3D',
+                name: modelMatch[2] + ' (' + path.basename(modelMatch[1]) + ')',
+                mesh: meshData
+            });
+            continue;
+        }
+
         const rectMatch = line.match(/^draw\s+rectangle\s+at\s+(-?\d+)\s*,\s*(-?\d+)\s+with\s+width\s+(\d+)\s+height\s+(\d+)(?:\s+color\s+"([^"]+)")?/i);
         if (rectMatch) {
             messages.push({
@@ -223,7 +246,6 @@ function extractVisualConstructs(source: string): Array<Record<string, any>> {
             continue;
         }
 
-        // Match: draw circle at X, Y with radius R color "C"
         const circleMatch = line.match(/^draw\s+circle\s+at\s+(-?\d+)\s*,\s*(-?\d+)\s+with\s+radius\s+(\d+)(?:\s+color\s+"([^"]+)")?/i);
         if (circleMatch) {
             messages.push({
@@ -237,7 +259,6 @@ function extractVisualConstructs(source: string): Array<Record<string, any>> {
             continue;
         }
 
-        // Match: add SPRITE <name> at X, Y
         const spriteMatch = line.match(/^add\s+SPRITE\s+([a-zA-Z0-9_]+)(?:\s+at\s+(-?\d+)\s*,\s*(-?\d+))?/i);
         if (spriteMatch) {
             messages.push({
@@ -267,7 +288,7 @@ function getStudioHtml(fileName: string): string {
         '  * { box-sizing: border-box; }',
         '  body { margin: 0; padding: 0; background: #0d1117; color: #e6edf3; font-family: "Segoe UI", Consolas, monospace; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }',
         '  header { background: #161b22; padding: 8px 14px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }',
-        '  .brand { font-weight: 700; color: #58a6ff; font-size: 13px; display: flex; align-items: center; gap: 8px; }',
+        '  .brand { font-weight: 700; color: #58a6ff; font-size: 13px; }',
         '  .tabs { display: flex; gap: 6px; }',
         '  .tab-btn { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }',
         '  .tab-btn.active { background: #1f6feb; color: #ffffff; border-color: #388bfd; }',
@@ -282,13 +303,13 @@ function getStudioHtml(fileName: string): string {
         '  .log-line { margin: 4px 0; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }',
         '  .log-3d { color: #d2a8ff; font-weight: 600; }',
         '  .log-2d { color: #3fb950; font-weight: 600; }',
-        '  .log-err { color: #ff7b72; }',
+        '  .log-err { color: #ff7b72; font-weight: 600; }',
         '  .log-sys { color: #79c0ff; font-style: italic; }',
         '</style>',
         '</head>',
         '<body>',
         '  <header>',
-        '    <div class="brand">FRIDGE Runtime — ' + fileName + '</div>',
+        '    <div class="brand">FRIDGE v0.5.0 Runtime — ' + fileName + '</div>',
         '    <div class="tabs">',
         '      <button class="tab-btn active" id="tab-console" onclick="setMode(\'console\')">Console</button>',
         '      <button class="tab-btn" id="tab-2d" onclick="setMode(\'2d\')">2D Canvas</button>',
@@ -300,12 +321,12 @@ function getStudioHtml(fileName: string): string {
         '    <canvas id="canvas2d"></canvas>',
         '    <canvas id="canvas3d"></canvas>',
         '    <div id="hud">',
-        '      <div id="hud-title"><b>Scene Inspector</b></div>',
+        '      <div><b>Scene Hierarchy</b></div>',
         '      <div id="hud-list">Ready</div>',
         '    </div>',
         '  </div>',
         '  <div id="console-container">',
-        '    <div class="log-line log-sys">>>> Executing ' + fileName + ' in FRIDGE Engine...</div>',
+        '    <div class="log-line log-sys">>>> Executing ' + fileName + ' in FRIDGE v0.5.0 Engine...</div>',
         '  </div>',
         '<script>',
         '  const stageArea = document.getElementById("stage-area");',
@@ -364,7 +385,6 @@ function getStudioHtml(fileName: string): string {
         '    consoleContainer.scrollTop = consoleContainer.scrollHeight;',
         '  }',
         '',
-        '  // --- 2D RENDER LOOP ---',
         '  function render2D() {',
         '    const w = canvas2d.width, h = canvas2d.height;',
         '    ctx2d.clearRect(0, 0, w, h);',
@@ -385,7 +405,6 @@ function getStudioHtml(fileName: string): string {
         '    }',
         '  }',
         '',
-        '  // --- 3D BUILT-IN SOFTWARE & WIREFRAME/SOLID ENGINE (100% OFFLINE) ---',
         '  let camYaw = 0.6, camPitch = 0.35, isDragging = false, lastX = 0, lastY = 0, tick = 0;',
         '  canvas3d.addEventListener("mousedown", e => { isDragging = true; lastX = e.clientX; lastY = e.clientY; });',
         '  window.addEventListener("mouseup", () => { isDragging = false; });',
@@ -428,23 +447,32 @@ function getStudioHtml(fileName: string): string {
         '      const cx = (idx - (nodes3D.length - 1) / 2) * 2.4;',
         '      const cy = 0.2 + Math.sin(tick + idx) * 0.25;',
         '      const cz = 0;',
-        '      const r = 0.75;',
         '      const rot = tick + idx * 0.7;',
-        '      const pts = [];',
-        '      for (let i = 0; i < 8; i++) {',
-        '        const vx = (i & 1 ? r : -r);',
-        '        const vy = (i & 2 ? r : -r);',
-        '        const vz = (i & 4 ? r : -r);',
-        '        const rx = vx * Math.cos(rot) - vz * Math.sin(rot);',
-        '        const rz = vz * Math.cos(rot) + vx * Math.sin(rot);',
-        '        pts.push([cx + rx, cy + vy, cz + rz]);',
+        '      if (node.mesh && node.mesh.vertices && node.mesh.vertices.length > 0) {',
+        '        const pts = node.mesh.vertices.map(v => {',
+        '          const rx = v[0] * Math.cos(rot) - v[2] * Math.sin(rot);',
+        '          const rz = v[2] * Math.cos(rot) + v[0] * Math.sin(rot);',
+        '          return [cx + rx, cy + v[1], cz + rz];',
+        '        });',
+        '        for (const e of node.mesh.edges) {',
+        '          if (pts[e[0]] && pts[e[1]]) drawLine3D(pts[e[0]], pts[e[1]], w, h, node.color, 1.8);',
+        '        }',
+        '      } else {',
+        '        const r = 0.75;',
+        '        const pts = [];',
+        '        for (let i = 0; i < 8; i++) {',
+        '          const vx = (i & 1 ? r : -r), vy = (i & 2 ? r : -r), vz = (i & 4 ? r : -r);',
+        '          const rx = vx * Math.cos(rot) - vz * Math.sin(rot);',
+        '          const rz = vz * Math.cos(rot) + vx * Math.sin(rot);',
+        '          pts.push([cx + rx, cy + vy, cz + rz]);',
+        '        }',
+        '        const edges = [[0,1],[1,3],[3,2],[2,0],[4,5],[5,7],[7,6],[6,4],[0,4],[1,5],[2,6],[3,7]];',
+        '        for (const e of edges) { drawLine3D(pts[e[0]], pts[e[1]], w, h, node.color, 2.2); }',
         '      }',
-        '      const edges = [[0,1],[1,3],[3,2],[2,0],[4,5],[5,7],[7,6],[6,4],[0,4],[1,5],[2,6],[3,7]];',
-        '      for (const e of edges) { drawLine3D(pts[e[0]], pts[e[1]], w, h, node.color, 2.2); }',
-        '      const labelPos = project3D(cx, cy + r + 0.45, cz, w, h);',
+        '      const labelPos = project3D(cx, cy + 1.25, cz, w, h);',
         '      if (labelPos) {',
         '        ctx3d.fillStyle = "#ffffff"; ctx3d.font = "bold 12px Segoe UI";',
-        '        ctx3d.fillText(node.name, labelPos.sx - 24, labelPos.sy);',
+        '        ctx3d.fillText(node.name, labelPos.sx - 28, labelPos.sy);',
         '      }',
         '    });',
         '  }',
@@ -465,7 +493,7 @@ function getStudioHtml(fileName: string): string {
         '      appendLog(msg.text, "log-err");',
         '    } else if (msg.type === "spawn3D") {',
         '      if (!nodes3D.some(n => n.name === msg.name)) {',
-        '        nodes3D.push({ name: msg.name, color: palette[nodes3D.length % palette.length] });',
+        '        nodes3D.push({ name: msg.name, color: palette[nodes3D.length % palette.length], mesh: msg.mesh || null });',
         '      }',
         '      if (currentMode === "console") setMode("3d");',
         '      updateHud();',
