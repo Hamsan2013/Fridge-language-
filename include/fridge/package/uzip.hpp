@@ -1,17 +1,12 @@
 #pragma once
-#include <filesystem>
 #include <string>
 
 namespace fridge {
 
-class UZipPackage {
+class UzipPackage {
 public:
-    static bool pack(const std::filesystem::path& folder, const std::filesystem::path& output_uzip);
-    static bool unpack(const std::filesystem::path& input_uzip, const std::filesystem::path& target_dir);
-    static std::string mount_and_validate(const std::filesystem::path& uzip_path);
-
-private:
-    static bool is_safe_path(const std::filesystem::path& base, const std::filesystem::path& path);
+    static bool pack(const std::string& inputFile, const std::string& outputUzip);
+    static std::string unpackToSource(const std::string& uzipPath);
 };
 
 } // namespace fridge
