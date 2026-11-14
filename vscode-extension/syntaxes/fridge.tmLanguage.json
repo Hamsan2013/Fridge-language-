@@ -3,34 +3,91 @@
   "name": "FRIDGE",
   "scopeName": "source.frg",
   "patterns": [
-    {
-      "name": "comment.line.frg",
-      "match": "(//|\\bnote\\b).*$"
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#danger_red" },
+    { "include": "#two_letter_red" },
+    { "include": "#control_purple" },
+    { "include": "#storage_blue" },
+    { "include": "#engine_cyan" },
+    { "include": "#io_gold" },
+    { "include": "#functions" },
+    { "include": "#constants" },
+    { "include": "#variables" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.fridge",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.line.note.fridge",
+          "match": "^\\s*note\\b.*$"
+        },
+        {
+          "name": "comment.block.fridge",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
     },
-    {
-      "name": "string.quoted.double.frg",
+    "strings": {
+      "name": "string.quoted.double.fridge",
       "begin": "\"",
-      "end": "\""
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.fridge",
+          "match": "\\\\."
+        }
+      ]
     },
-    {
-      "name": "keyword.control.frg",
-      "match": "\\b(if|otherwise|end if|repeat|times|end repeat|while|end while|for each|in|end for|when|end when|listen|for|end listen|attempt|on error|end attempt|child|end OBJ|end scene|end game|end window)\\b"
+    "numbers": {
+      "name": "constant.numeric.fridge",
+      "match": "\\b-?\\d+(\\.\\d+)?\\b"
     },
-    {
-      "name": "keyword.declaration.frg",
-      "match": "\\b(remember|as|set|to|becomes|show|ask|into|add OBJ|add|subtract|multiply|divide|by|from|move world environment|play sound|loop sound|use model|use image|wait|save|read|file|open|create)\\b"
+    "danger_red": {
+      "name": "invalid.illegal.danger.fridge",
+      "match": "\\b(delete|del|stop|exit|error)\\b"
     },
-    {
-      "name": "keyword.operator.frg",
-      "match": "\\b(is|is not|greater than|less than|at least|at most|equal to|plus|minus|multiplied by|divided by|modulo|joined with|and|or|not)\\b"
+    "two_letter_red": {
+      "name": "keyword.operator.twoletter.fridge",
+      "match": "\\b(as|to|is|in|at|by|of|on|or)\\b"
     },
-    {
-      "name": "constant.numeric.frg",
-      "match": "\\b[0-9]+(\\.[0-9]+)?\\b"
+    "control_purple": {
+      "name": "keyword.control.fridge",
+      "match": "\\b(if|otherwise|repeat|while|for\\s+each|attempt|returning|times)\\b"
     },
-    {
-      "name": "constant.language.frg",
-      "match": "\\b(true|false|nothing|seconds|milliseconds)\\b"
+    "storage_blue": {
+      "name": "storage.type.fridge",
+      "match": "\\b(remember|rem|set|create\\s+function|fnc|called)\\b"
+    },
+    "engine_cyan": {
+      "name": "support.class.engine.fridge",
+      "match": "\\b(add\\s+OBJ|add\\s+SPRITE|draw\\s+rectangle|draw\\s+circle|load\\s+3d\\s+model|create\\s+2d\\s+canvas|move|width|height|radius|color|vector3)\\b"
+    },
+    "io_gold": {
+      "name": "support.function.io.fridge",
+      "match": "\\b(show|ask|listen|create\\s+file|read\\s+file|add|file|into|from|with|joined)\\b"
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.fridge",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()"
+        }
+      ]
+    },
+    "constants": {
+      "name": "constant.language.fridge",
+      "match": "\\b(true|false|nothing)\\b"
+    },
+    "variables": {
+      "name": "variable.other.fridge",
+      "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
     }
-  ]
+  }
 }
