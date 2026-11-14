@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-windows:
-    name: Build fridge.exe and VS Code Extension
+    name: Build fridge.exe, Installer & VS Code Extension
     runs-on: windows-latest
 
     steps:
@@ -90,7 +90,7 @@ jobs:
           if-no-files-found: warn
 
   build-linux:
-    name: Build FRIDGE for Linux
+    name: Build FRIDGE Binary & .deb Installer for Linux
     runs-on: ubuntu-latest
 
     steps:
@@ -103,7 +103,7 @@ jobs:
           VERSION=$(node -p "require('./vscode-extension/package.json').version")
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Build fridge (Linux)
+      - name: Build fridge Binary (Linux)
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --config Release
@@ -111,14 +111,33 @@ jobs:
           find build -name "fridge" -type f -executable -exec cp {} dist-linux/ \;
           tar -czvf FRIDGE-Linux-v${{ steps.ver.outputs.VERSION }}.tar.gz -C dist-linux .
 
-      - name: Upload Linux Artifact
+      - name: Build Linux .deb Installer
+        run: |
+          VER="${{ steps.ver.outputs.VERSION }}"
+          mkdir -p pkg-deb/DEBIAN pkg-deb/usr/local/bin
+          cp dist-linux/fridge pkg-deb/usr/local/bin/fridge
+          chmod 755 pkg-deb/usr/local/bin/fridge
+          cat <<EOF > pkg-deb/DEBIAN/control
+          Package: fridge-lang
+          Version: ${VER}
+          Section: devel
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Hamsan (AD Developers)
+          Description: Official FRIDGE Programming Language Interpreter and Runtime
+          EOF
+          dpkg-deb --build pkg-deb "FRIDGE-Linux-v${VER}.deb"
+
+      - name: Upload Linux Artifacts (v${{ steps.ver.outputs.VERSION }})
         uses: actions/upload-artifact@v4
         with:
-          name: FRIDGE-Linux-v${{ steps.ver.outputs.VERSION }}
-          path: FRIDGE-Linux-v${{ steps.ver.outputs.VERSION }}.tar.gz
+          name: FRIDGE-Linux-Installer-v${{ steps.ver.outputs.VERSION }}
+          path: |
+            FRIDGE-Linux-v${{ steps.ver.outputs.VERSION }}.deb
+            FRIDGE-Linux-v${{ steps.ver.outputs.VERSION }}.tar.gz
 
   build-macos:
-    name: Build FRIDGE for macOS
+    name: Build FRIDGE Binary & .pkg Installer for macOS
     runs-on: macos-latest
 
     steps:
@@ -131,7 +150,7 @@ jobs:
           VERSION=$(node -p "require('./vscode-extension/package.json').version")
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Build fridge (macOS)
+      - name: Build fridge Binary (macOS)
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --config Release
@@ -139,8 +158,22 @@ jobs:
           find build -name "fridge" -type f -perm +111 -exec cp {} dist-macos/ \;
           tar -czvf FRIDGE-macOS-v${{ steps.ver.outputs.VERSION }}.tar.gz -C dist-macos .
 
-      - name: Upload macOS Artifact
+      - name: Build macOS .pkg Installer
+        run: |
+          VER="${{ steps.ver.outputs.VERSION }}"
+          mkdir -p pkg-mac/usr/local/bin
+          cp dist-macos/fridge pkg-mac/usr/local/bin/fridge
+          chmod 755 pkg-mac/usr/local/bin/fridge
+          pkgbuild --root pkg-mac \
+            --identifier com.addevelopers.fridge \
+            --version "$VER" \
+            --install-location / \
+            "FRIDGE-macOS-v${VER}.pkg"
+
+      - name: Upload macOS Artifacts (v${{ steps.ver.outputs.VERSION }})
         uses: actions/upload-artifact@v4
         with:
-          name: FRIDGE-macOS-v${{ steps.ver.outputs.VERSION }}
-          path: FRIDGE-macOS-v${{ steps.ver.outputs.VERSION }}.tar.gz
+          name: FRIDGE-macOS-Installer-v${{ steps.ver.outputs.VERSION }}
+          path: |
+            FRIDGE-macOS-v${{ steps.ver.outputs.VERSION }}.pkg
+            FRIDGE-macOS-v${{ steps.ver.outputs.VERSION }}.tar.gz
