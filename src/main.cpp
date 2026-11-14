@@ -110,25 +110,25 @@ public:
             std::smatch match;
 
             // 1. Variable declaration: rem <var> as <expr> OR remember <var> as <expr>
-            if (std::regex_match(line, match, std::regex(R"(^(?:rem|remember)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+as\s+(.+)$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"((?:rem|remember)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+as\s+(.+))", std::regex::icase))) {
                 variables[match[1].str()] = evalExpr(match[2].str());
                 continue;
             }
 
             // 2. Variable mutation: set <var> to <expr>
-            if (std::regex_match(line, match, std::regex(R"(^set\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+to\s+(.+)$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"(set\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+to\s+(.+))", std::regex::icase))) {
                 variables[match[1].str()] = evalExpr(match[2].str());
                 continue;
             }
 
             // 3. Console Output: show <expr>
-            if (std::regex_match(line, match, std::regex(R"(^show\s+(.+)$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"(show\s+(.+))", std::regex::icase))) {
                 std::cout << evalExpr(match[1].str()) << std::endl;
                 continue;
             }
 
             // 4. Interactive Input: ask <prompt> as <var>
-            if (std::regex_match(line, match, std::regex(R"(^ask\s+(.+)\s+as\s+([a-zA-Z_][a-zA-Z0-9_]*)$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"(ask\s+(.+)\s+as\s+([a-zA-Z_][a-zA-Z0-9_]*))", std::regex::icase))) {
                 std::cout << evalExpr(match[1].str()) << " ";
                 std::string input;
                 std::getline(std::cin, input);
@@ -137,12 +137,12 @@ public:
             }
 
             // 5. Stop with custom error: stop with error <expr>
-            if (std::regex_match(line, match, std::regex(R"(^stop\s+with\s+error\s+(.+)$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"(stop\s+with\s+error\s+(.+))", std::regex::icase))) {
                 throw std::runtime_error(evalExpr(match[1].str()));
             }
 
             // 6. File System: Create / Overwrite File
-            if (std::regex_match(line, match, std::regex(R"(^create\s+file\s+(".*?"|\S+)\s+with\s+(.+)$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"(create\s+file\s+(\".*?\"|\S+)\s+with\s+(.+))", std::regex::icase))) {
                 std::string pathStr = evalExpr(match[1].str());
                 std::string content = evalExpr(match[2].str());
                 fs::path p(pathStr);
@@ -154,7 +154,7 @@ public:
             }
 
             // 7. File System: Append to File
-            if (std::regex_match(line, match, std::regex(R"(^add\s+(.+)\s+to\s+file\s+(".*?"|\S+)$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"(add\s+(.+)\s+to\s+file\s+(\".*?\"|\S+))", std::regex::icase))) {
                 std::string content = evalExpr(match[1].str());
                 std::string pathStr = evalExpr(match[2].str());
                 std::ofstream out(pathStr, std::ios::app);
@@ -164,7 +164,7 @@ public:
             }
 
             // 8. File System: Read File
-            if (std::regex_match(line, match, std::regex(R"(^read\s+file\s+(".*?"|\S+)\s+into\s+([a-zA-Z_][a-zA-Z0-9_]*)$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"(read\s+file\s+(\".*?\"|\S+)\s+into\s+([a-zA-Z_][a-zA-Z0-9_]*))", std::regex::icase))) {
                 std::string pathStr = evalExpr(match[1].str());
                 std::ifstream in(pathStr);
                 if (!in) throw std::runtime_error("File does not exist: " + pathStr);
@@ -175,7 +175,7 @@ public:
             }
 
             // 9. File System: Delete File via del("path") or delete file "path"
-            if (std::regex_match(line, match, std::regex(R"(^(?:del\s*\(\s*(.+?)\s*\)|delete\s+file\s+(.+))$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"((?:del\s*\(\s*(.+?)\s*\)|delete\s+file\s+(.+)))", std::regex::icase))) {
                 std::string rawTarget = match[1].matched ? match[1].str() : match[2].str();
                 std::string pathStr = evalExpr(rawTarget);
                 if (!fs::exists(pathStr)) {
@@ -186,7 +186,7 @@ public:
             }
 
             // 10. 3D Asset Loading: load 3d model from "assets/..." as <id>
-            if (std::regex_match(line, match, std::regex(R"(^load\s+3d\s+model\s+from\s+(".*?"|\S+)\s+as\s+([a-zA-Z_][a-zA-Z0-9_]*)$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"(load\s+3d\s+model\s+from\s+(\".*?\"|\S+)\s+as\s+([a-zA-Z_][a-zA-Z0-9_]*))", std::regex::icase))) {
                 std::string modelPath = evalExpr(match[1].str());
                 std::string nodeName = match[2].str();
                 std::cout << "[FRIDGE 3D Asset] Loaded model '" << modelPath << "' as '" << nodeName << "'." << std::endl;
@@ -194,19 +194,19 @@ public:
             }
 
             // 11. 3D Scene Node: add OBJ <name>
-            if (std::regex_match(line, match, std::regex(R"(^add\s+OBJ\s+([a-zA-Z0-9_]+)$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"(add\s+OBJ\s+([a-zA-Z0-9_]+))", std::regex::icase))) {
                 std::cout << "[FRIDGE 3D Engine] Instantiated 3D scene node: '" << match[1].str() << "'." << std::endl;
                 continue;
             }
 
             // 12. 2D Engine Commands
-            if (std::regex_match(line, match, std::regex(R"(^(draw\s+rectangle|draw\s+circle|add\s+SPRITE|create\s+2d\s+canvas)\b.*$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"((draw\s+rectangle|draw\s+circle|add\s+SPRITE|create\s+2d\s+canvas)\b.*)", std::regex::icase))) {
                 std::cout << "[FRIDGE 2D Engine] " << line << std::endl;
                 continue;
             }
 
             // 13. Function Definition: fnc name(params) { ... }
-            if (std::regex_match(line, match, std::regex(R"(^fnc\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*\{$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"(fnc\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*\{)", std::regex::icase))) {
                 FunctionDef fn;
                 fn.name = match[1].str();
                 std::stringstream ss(match[2].str());
@@ -221,15 +221,14 @@ public:
             }
 
             // 14. Safe Error Handling: attempt { ... } error() { ... }
-            if (std::regex_match(line, match, std::regex(R"(^attempt\s*\{$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"(attempt\s*\{)", std::regex::icase))) {
                 std::vector<std::string> tryBlock = collectBlock(lines, i);
                 std::vector<std::string> catchBlock;
 
-                // Check for error() { on closing line or next line
                 std::string closingLine = trim(lines[i]);
-                if (std::regex_search(closingLine, std::regex(R"(\}\s*error\s*\(\s*\)\s*\{$)", std::regex::icase))) {
+                if (std::regex_search(closingLine, std::regex(R"(\}\s*error\s*\(\s*\)\s*\{)", std::regex::icase))) {
                     catchBlock = collectBlock(lines, i);
-                } else if (i + 1 < lines.size() && std::regex_match(trim(lines[i + 1]), std::regex(R"(^error\s*\(\s*\)\s*\{$)", std::regex::icase))) {
+                } else if (i + 1 < lines.size() && std::regex_match(trim(lines[i + 1]), std::regex(R"(error\s*\(\s*\)\s*\{)", std::regex::icase))) {
                     i++;
                     catchBlock = collectBlock(lines, i);
                 }
@@ -244,7 +243,7 @@ public:
             }
 
             // 15. Repeat Loop: repeat N times { ... }
-            if (std::regex_match(line, match, std::regex(R"(^repeat\s+(.+)\s+times\s*\{$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"(repeat\s+(.+)\s+times\s*\{)", std::regex::icase))) {
                 int count = std::stoi(evalExpr(match[1].str()));
                 std::vector<std::string> loopBody = collectBlock(lines, i);
                 for (int c = 0; c < count; ++c) {
@@ -254,15 +253,15 @@ public:
             }
 
             // 16. Conditionals: if <cond> { ... } otherwise { ... }
-            if (std::regex_match(line, match, std::regex(R"(^if\s+(.+?)\s*\{$)", std::regex::icase))) {
+            if (std::regex_match(line, match, std::regex(R"(if\s+(.+?)\s*\{)", std::regex::icase))) {
                 bool cond = evalCondition(match[1].str());
                 std::vector<std::string> ifBody = collectBlock(lines, i);
                 std::vector<std::string> elseBody;
 
                 std::string closeLine = trim(lines[i]);
-                if (std::regex_search(closeLine, std::regex(R"(\}\s*otherwise\s*\{$)", std::regex::icase))) {
+                if (std::regex_search(closeLine, std::regex(R"(\}\s*otherwise\s*\{)", std::regex::icase))) {
                     elseBody = collectBlock(lines, i);
-                } else if (i + 1 < lines.size() && std::regex_match(trim(lines[i + 1]), std::regex(R"(^otherwise\s*\{$)", std::regex::icase))) {
+                } else if (i + 1 < lines.size() && std::regex_match(trim(lines[i + 1]), std::regex(R"(otherwise\s*\{)", std::regex::icase))) {
                     i++;
                     elseBody = collectBlock(lines, i);
                 }
@@ -273,7 +272,7 @@ public:
             }
 
             // 17. Function Call: name(arg1, arg2)
-            if (std::regex_match(line, match, std::regex(R"(^([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)$)"))) {
+            if (std::regex_match(line, match, std::regex(R"(([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\))"))) {
                 std::string fnName = match[1].str();
                 if (functions.count(fnName)) {
                     const auto& fn = functions[fnName];
@@ -293,3 +292,35 @@ public:
         }
     }
 };
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        std::cout << "FRIDGE v0.5.0\nUsage: fridge <script.frg>\n";
+        return 0;
+    }
+
+    std::ifstream input(argv[1]);
+    if (!input) {
+        std::cerr << "Cannot open file: " << argv[1] << std::endl;
+        return 1;
+    }
+
+    std::stringstream buffer;
+    buffer << input.rdbuf();
+
+    std::vector<std::string> lines;
+    std::string line;
+    std::stringstream source(buffer.str());
+    while (std::getline(source, line)) {
+        lines.push_back(line);
+    }
+
+    FridgeInterpreter interpreter;
+    try {
+        interpreter.executeBlock(lines);
+        return 0;
+    } catch (const std::exception& ex) {
+        std::cerr << ex.what() << std::endl;
+        return 1;
+    }
+}
