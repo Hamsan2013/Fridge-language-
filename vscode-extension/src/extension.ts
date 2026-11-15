@@ -10,7 +10,7 @@ export function activate(context: vscode.ExtensionContext): void {
             vscode.window.showWarningMessage('Open a .frg file first to run FRIDGE.');
             return;
         }
-        runFridgeFile(editor.document);
+        return runFridgeFile(editor.document);
     });
 
     context.subscriptions.push(runCommand);
