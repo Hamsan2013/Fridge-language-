@@ -138,7 +138,9 @@ jobs:
           test -n "$VERSION" || { echo "Cannot read engine version"; exit 1; }
           if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$VERSION" ]]; then echo "Release tag does not match CMake version"; exit 1; fi
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: ''
       - name: Install Android NDK
         run: sdkmanager --install "ndk;27.2.12479018"
       - name: Cross-compile Android arm64 CLI
