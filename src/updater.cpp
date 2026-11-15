@@ -381,10 +381,9 @@ bool check_latest(ReleaseInfo& info, std::string& error) {
         error = "The latest release does not publish the exact installer for this operating system: " + required_name;
         return false;
     }
-    if (info.download_url.rfind(kDownloadPrefix, 0) != 0 ||
-        info.download_url.find('"') != std::string::npos ||
-        info.download_url.find('\\') != std::string::npos ||
-        info.download_url.find("..") != std::string::npos) {
+    const std::string expected_url = std::string(kDownloadPrefix) +
+        info.latest_version + "/" + required_name;
+    if (info.download_url != expected_url) {
         error = "The release contains an unsafe or unexpected download URL.";
         return false;
     }
