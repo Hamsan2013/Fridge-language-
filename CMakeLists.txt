@@ -14,7 +14,6 @@ endif()
 
 set(FRIDGE_SOURCES
     src/main.cpp
-    src/updater.cpp
 )
 
 add_executable(fridge ${FRIDGE_SOURCES})
@@ -31,7 +30,6 @@ if(BUILD_TESTING)
     target_include_directories(fridge_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_definitions(fridge_test PRIVATE
         FRIDGE_VERSION="${PROJECT_VERSION}"
-        FRIDGE_TESTING=1
     )
     add_test(
         NAME fridge_smoke
