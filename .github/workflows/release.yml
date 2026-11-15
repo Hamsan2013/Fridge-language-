@@ -84,8 +84,8 @@ jobs:
       - name: Build DEB package
         run: |
           VER="${{ steps.version.outputs.VERSION }}"
-          mkdir -p pkg/DEBIAN pkg/usr/bin
-          install -m 755 build/fridge pkg/usr/bin/fridge
+          mkdir -p pkg/DEBIAN pkg/usr/local/bin
+          install -m 755 build/fridge pkg/usr/local/bin/fridge
           ARCH="$(dpkg --print-architecture)"
           printf 'Package: fridge-lang\nVersion: %s\nSection: devel\nPriority: optional\nArchitecture: %s\nMaintainer: Hamsan A\nDescription: FRIDGE Programming Language interpreter\n' "$VER" "$ARCH" > pkg/DEBIAN/control
           dpkg-deb --build pkg "FRIDGE-Linux-v$VER.deb"
