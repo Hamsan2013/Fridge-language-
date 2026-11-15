@@ -888,6 +888,79 @@ std::vector<SourceLine> read_source(const fs::path& path) {
         const std::string trailing = trim(source.text.substr(otherwise_end + 1));
         if (!trailing.empty()) normalized.push_back({trailing, source.number});
     }
+
+    // Expand single-line block bodies into the regular multi-line form.
+    // Repeat to handle nested compact blocks; the line limit above bounds input.
+    for (size_t pass = 0; pass < 64; ++pass) {
+        std::vector<SourceLine> expanded;
+        bool changed = false;
+        for (const auto& source : normalized) {
+            const std::string current = trim(source.text);
+            const std::string command = lower(current);
+            const bool block_header =
+                starts_with_ci(command, "if ") ||
+                starts_with_ci(command, "while ") ||
+                starts_with_ci(command, "repeat ") ||
+                starts_with_ci(command, "fnc ") ||
+                command == "attempt" ||
+                command == "otherwise" ||
+                starts_with_ci(command, "error(");
+            if (!block_header) {
+                expanded.push_back(source);
+                continue;
+            }
+
+            size_t opening = std::string::npos;
+            bool in_text = false, escape = false;
+            for (size_t column = 0; column < source.text.size(); ++column) {
+                const char ch = source.text[column];
+                if (in_text) {
+                    if (escape) escape = false;
+                    else if (ch == '\\') escape = true;
+                    else if (ch == '"') in_text = false;
+                    continue;
+                }
+                if (ch == '"') in_text = true;
+                else if (ch == '/' && column + 1 < source.text.size() && source.text[column + 1] == '/') break;
+                else if (ch == '{') { opening = column; break; }
+            }
+            if (opening == std::string::npos) {
+                expanded.push_back(source);
+                continue;
+            }
+
+            int nesting = 1;
+            size_t closing = std::string::npos;
+            in_text = false;
+            escape = false;
+            for (size_t column = opening + 1; column < source.text.size(); ++column) {
+                const char ch = source.text[column];
+                if (in_text) {
+                    if (escape) escape = false;
+                    else if (ch == '\\') escape = true;
+                    else if (ch == '"') in_text = false;
+                    continue;
+                }
+                if (ch == '"') in_text = true;
+                else if (ch == '/' && column + 1 < source.text.size() && source.text[column + 1] == '/') break;
+                else if (ch == '{') ++nesting;
+                else if (ch == '}' && --nesting == 0) { closing = column; break; }
+            }
+            if (closing == std::string::npos) {
+                expanded.push_back(source);
+                continue;
+            }
+
+            expanded.push_back({source.text.substr(0, opening + 1), source.number});
+            const std::string inline_body = trim(source.text.substr(opening + 1, closing - opening - 1));
+            if (!inline_body.empty()) expanded.push_back({inline_body, source.number});
+            const std::string after_block = trim(source.text.substr(closing + 1));
+            expanded.push_back({"}" + (after_block.empty() ? std::string() : " " + after_block), source.number});
+            changed = true;
+        }
+        normalized = std::move(expanded);
+        if (!changed) break;
+    }
     return normalized;
 }
 
