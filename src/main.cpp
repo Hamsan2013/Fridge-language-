@@ -14,8 +14,6 @@
 #include <utility>
 #include <vector>
 
-#include "updater.hpp"
-
 namespace fs = std::filesystem;
 
 #ifndef FRIDGE_VERSION
@@ -1132,29 +1130,12 @@ void print_help() {
               << "Usage:\n"
               << "  fridge run <file.frg>     Execute a FRIDGE program\n"
               << "  fridge check <file.frg>   Validate source without executing it\n"
-              << "  fridge update             Check and install the latest official release\n"
               << "  fridge version            Display the installed version\n"
               << "  fridge help               Display this help\n"
               << "\nPrograms use the current directory as their project root for file I/O.\n";
 }
 
 int run_program(const fs::path& path) {
-#ifndef FRIDGE_TESTING
-    fridge_update::ReleaseInfo release;
-    std::string error;
-    if (!fridge_update::check_latest_version(release, error)) {
-        // The release check is deliberately best-effort: slow or unavailable
-        // networks must never prevent a local FRIDGE program from running.
-        std::cerr << "[FRG-UPD-WARN] Could not check the latest FRIDGE release within 3 seconds: "
-                  << error << "\n"
-                  << "Continuing offline. You can check manually with: fridge update\n";
-    } else if (fridge_update::update_required(release)) {
-        std::cerr << "[FRG-UPD-REQUIRED] This FRIDGE build (v" << FRIDGE_VERSION
-                  << ") is out of date. The latest release is " << release.latest_version << ".\n"
-                  << "Execution is blocked until you install the update. Run: fridge update\n";
-        return 3;
-    }
-#endif
     try {
         Interpreter interpreter;
         interpreter.execute(read_source(path));
@@ -1172,7 +1153,7 @@ void print_version() {
 #elif defined(__APPLE__)
               << "Platform: macOS\n"
 #elif defined(__ANDROID__)
-              << "Platform: Android (automatic package updates unsupported)\n"
+              << "Platform: Android\n"
 #elif defined(__linux__)
               << "Platform: Linux\n"
 #else
@@ -1192,8 +1173,6 @@ int main(int argc, char* argv[]) {
         if (command == "version" || command == "--version" || command == "-v") {
             print_version(); return 0;
         }
-        if (command == "update") return fridge_update::run_update_command(argv[0]);
-
         if (command == "run" || command == "check") {
             if (argc != 3) {
                 std::cerr << "Usage: fridge " << command << " <file.frg>\n";
