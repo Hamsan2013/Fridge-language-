@@ -108,8 +108,8 @@ class ExpressionParser {
 public:
     using Variables = std::unordered_map<std::string, std::string>;
 
-    ExpressionParser(const std::string& input, const Variables& variables)
-        : variables_(variables) {
+    ExpressionParser(const std::string& input, const Variables& variables, bool syntax_only = false)
+        : variables_(variables), syntax_only_(syntax_only) {
         tokenize(input);
     }
 
@@ -129,6 +129,7 @@ private:
     };
 
     const Variables& variables_;
+    bool syntax_only_ = false;
     std::vector<Token> tokens_;
     size_t position_ = 0;
 
@@ -275,7 +276,7 @@ private:
         else if (numeric && op == "<") result = a < b;
         else if (numeric && op == ">=") result = a >= b;
         else if (numeric && op == "<=") result = a <= b;
-        else if (!numeric && op != "==" && op != "!=")
+        else if (!numeric && op != "==" && op != "!=" && !syntax_only_)
             throw std::runtime_error("Numeric comparison requires two numeric values.");
         return result ? "true" : "false";
     }
@@ -856,7 +857,7 @@ int check_source(const fs::path& path) {
 
     auto validate_expression = [](const std::string& expression, const SourceLine& source) {
         try {
-            (void)ExpressionParser(expression, Interpreter::Variables{}).parse();
+            (void)ExpressionParser(expression, Interpreter::Variables{}, true).parse();
             return true;
         } catch (const std::exception& error) {
             std::cerr << "FRG-CHECK-008: Invalid expression at line " << source.number
