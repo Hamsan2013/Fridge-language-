@@ -46,13 +46,15 @@ Direct invocation (fridge hello.frg) is retained for older scripts and shortcuts
 
 ## Mandatory update protection
 
-Every fridge run checks the latest stable GitHub Release before executing a program. When a newer engine release exists, execution is blocked until the user runs:
+**One-time bootstrap:** the existing v0.5.0 binaries do not contain the updater. The first move to v0.5.2 therefore requires downloading and installing the matching v0.5.2 OS asset manually once. After that, later releases can be installed from `fridge update`.
+
+Every fridge run resolves the latest stable GitHub Release tag over HTTPS before executing a program. This uses GitHub's latest-release redirect rather than calling the rate-limited Releases API on every run. When a newer engine release exists, execution is blocked until the user runs:
 
 ~~~sh
 fridge update
 ~~~
 
-The updater reads the latest version and assets from this repository's GitHub Releases API. It selects only the exact installer name for the running operating system, downloads the asset over HTTPS, and verifies the SHA-256 digest published by GitHub before launching the installer.
+The updater reads release asset metadata from this repository's GitHub Releases API only when an update is requested. It selects only the exact installer name for the running operating system, downloads the asset over HTTPS, and verifies the SHA-256 digest published by GitHub before launching the installer.
 
 Current updater targets:
 
