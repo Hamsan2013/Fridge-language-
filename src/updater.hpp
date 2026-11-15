@@ -11,6 +11,7 @@ struct ReleaseInfo {
 };
 
 bool check_latest(ReleaseInfo& info, std::string& error);
+bool check_latest_version(ReleaseInfo& info, std::string& error);
 bool update_required(const ReleaseInfo& info);
 int run_update_command(const std::string& executable_path);
 }
