@@ -883,10 +883,10 @@ std::vector<SourceLine> read_source(const fs::path& path) {
             continue;
         }
         normalized.push_back({source.text.substr(0, close_pos + 1), source.number});
-        const std::string branch_header = trim(source.text.substr(close_pos + 1, otherwise_end - close_pos - 1)) + " {";
-        normalized.push_back({branch_header, source.number});
-        const std::string trailing = trim(source.text.substr(otherwise_end + 1));
-        if (!trailing.empty()) normalized.push_back({trailing, source.number});
+        // Keep the entire else branch on one logical line for the next
+        // pass; the generic inline-block expander will split its body and brace.
+        const std::string branch_line = trim(source.text.substr(close_pos + 1));
+        normalized.push_back({branch_line, source.number});
     }
 
     // Expand single-line block bodies into the regular multi-line form.
