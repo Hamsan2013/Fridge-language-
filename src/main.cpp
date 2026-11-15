@@ -555,7 +555,7 @@ private:
                     if (out.fail()) throw std::runtime_error("Closing file failed: " + path);
                     continue;
                 }
-                if (std::regex_match(line, match, std::regex(R"(add\s+(.+)\s+to\s+file\s+(.+))", std::regex::icase))) {
+                if (std::regex_match(line, match, std::regex(R"(add\s+(.+?)\s+to\s+file\s+(.+))", std::regex::icase))) {
                     const std::string content = eval(match[1].str());
                     const std::string path = eval(match[2].str());
                     const fs::path target = safe_path(path, true);
@@ -666,12 +666,12 @@ private:
                             std::to_string(fn.parameters.size()) + " argument(s), received " +
                             std::to_string(args.size()) + ".");
                     }
-                    std::vector<std::pair<std::string, bool>> old_values;
+                    struct SavedVariable { std::string key; bool existed; std::string value; };
+                    std::vector<SavedVariable> old_values;
                     for (size_t a = 0; a < args.size(); ++a) {
                         const std::string parameter = lower(fn.parameters[a]);
                         const auto old = variables_.find(parameter);
-                        old_values.push_back({parameter, old != variables_.end()});
-                        if (old != variables_.end()) old_values.back().second = true;
+                        old_values.push_back({parameter, old != variables_.end(), old != variables_.end() ? old->second : std::string()});
                         variables_[parameter] = eval(args[a]);
                     }
                     const bool old_returned = returned_;
@@ -682,22 +682,23 @@ private:
                         execute_block(fn.body, depth + 1);
                     } catch (...) {
                         for (const auto& entry : old_values) {
-                            if (entry.second) {
-                                // The old value is restored below from the snapshot.
-                            } else variables_.erase(entry.first);
+                            if (entry.existed) variables_[entry.key] = entry.value;
+                            else variables_.erase(entry.key);
                         }
                         --recursion_depth_;
                         returned_ = old_returned;
                         return_value_ = old_return_value;
                         throw;
                     }
-                    for (const auto& entry : old_values) {
-                        if (!entry.second) variables_.erase(entry.first);
-                    }
+                    const bool function_returned = returned_;
                     const std::string function_result = return_value_;
+                    for (const auto& entry : old_values) {
+                        if (entry.existed) variables_[entry.key] = entry.value;
+                        else variables_.erase(entry.key);
+                    }
                     returned_ = old_returned;
                     return_value_ = old_return_value;
-                    if (!function_result.empty()) variables_[name + "_result"] = function_result;
+                    if (function_returned) variables_[name + "_result"] = function_result;
                     --recursion_depth_;
                     continue;
                 }
