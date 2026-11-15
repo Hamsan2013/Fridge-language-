@@ -81,13 +81,11 @@ if(bad_result EQUAL 0)
     message(FATAL_ERROR "Invalid statement unexpectedly returned success.")
 endif()
 
-message(STATUS "FRIDGE smoke tests passed.")
 
-
-file(WRITE "\${TEST_WORK_DIR}/bad-expression.frg" "show 1 +\n")
+file(WRITE "${TEST_WORK_DIR}/bad-expression.frg" "show 1 +\n")
 execute_process(
-    COMMAND "\${FRIDGE_TEST_EXECUTABLE}" check "\${TEST_WORK_DIR}/bad-expression.frg"
-    WORKING_DIRECTORY "\${TEST_WORK_DIR}"
+    COMMAND "${FRIDGE_TEST_EXECUTABLE}" check "${TEST_WORK_DIR}/bad-expression.frg"
+    WORKING_DIRECTORY "${TEST_WORK_DIR}"
     RESULT_VARIABLE expression_result
     OUTPUT_VARIABLE expression_output
     ERROR_VARIABLE expression_error
@@ -96,11 +94,11 @@ if(expression_result EQUAL 0)
     message(FATAL_ERROR "Malformed expression unexpectedly passed fridge check.")
 endif()
 
-file(REMOVE "\${TEST_WORK_DIR}/../fridge_escape.txt")
-file(WRITE "\${TEST_WORK_DIR}/traversal.frg" "create file \\"../fridge_escape.txt\\" with \\"blocked\\"\n")
+file(REMOVE "${TEST_WORK_DIR}/../fridge_escape.txt")
+file(WRITE "${TEST_WORK_DIR}/traversal.frg" "create file \"../fridge_escape.txt\" with \"blocked\"\n")
 execute_process(
-    COMMAND "\${FRIDGE_TEST_EXECUTABLE}" run "\${TEST_WORK_DIR}/traversal.frg"
-    WORKING_DIRECTORY "\${TEST_WORK_DIR}"
+    COMMAND "${FRIDGE_TEST_EXECUTABLE}" run "${TEST_WORK_DIR}/traversal.frg"
+    WORKING_DIRECTORY "${TEST_WORK_DIR}"
     RESULT_VARIABLE traversal_result
     OUTPUT_VARIABLE traversal_output
     ERROR_VARIABLE traversal_error
@@ -108,6 +106,8 @@ execute_process(
 if(traversal_result EQUAL 0)
     message(FATAL_ERROR "FRIDGE unexpectedly allowed a parent-directory traversal.")
 endif()
-if(EXISTS "\${TEST_WORK_DIR}/../fridge_escape.txt")
+if(EXISTS "${TEST_WORK_DIR}/../fridge_escape.txt")
     message(FATAL_ERROR "FRIDGE wrote a file outside the project directory.")
 endif()
+
+message(STATUS "FRIDGE smoke tests passed.")
