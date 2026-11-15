@@ -854,7 +854,6 @@ std::vector<SourceLine> read_source(const fs::path& path) {
     std::vector<SourceLine> normalized;
     for (const auto& source : lines) {
         size_t close_pos = std::string::npos;
-        size_t otherwise_end = std::string::npos;
         bool in_string = false, escaped = false;
         for (size_t column = 0; column < source.text.size(); ++column) {
             const char ch = source.text[column];
@@ -887,7 +886,6 @@ std::vector<SourceLine> read_source(const fs::path& path) {
                    std::isspace(static_cast<unsigned char>(source.text[open_brace]))) ++open_brace;
             if (open_brace < source.text.size() && source.text[open_brace] == '{') {
                 close_pos = column;
-                otherwise_end = open_brace;
                 break;
             }
         }
@@ -916,8 +914,8 @@ std::vector<SourceLine> read_source(const fs::path& path) {
                 starts_with_ci(command, "while ") ||
                 starts_with_ci(command, "repeat ") ||
                 starts_with_ci(command, "fnc ") ||
-                command == "attempt" ||
-                command == "otherwise" ||
+                starts_with_ci(command, "attempt") ||
+                starts_with_ci(command, "otherwise") ||
                 starts_with_ci(command, "error(");
             if (!block_header) {
                 expanded.push_back(source);
