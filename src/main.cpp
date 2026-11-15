@@ -404,6 +404,7 @@ private:
     }
 
     fs::path safe_path(const std::string& raw, bool create_parent) const {
+        if (raw.empty() || raw.size() > 4096) throw std::runtime_error("File path is empty or exceeds the 4096-byte safety limit.");
         const fs::path requested = fs::u8path(raw);
         if (requested.empty() || requested.is_absolute() || requested.has_root_name())
             throw std::runtime_error("File paths must be relative to the current project directory.");
@@ -579,6 +580,10 @@ private:
                 if (std::regex_match(line, match, std::regex(R"(read\s+file\s+(.+?)\s+into\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase))) {
                     const std::string path = eval(match[1].str());
                     const fs::path target = safe_path(path, false);
+                    std::error_code size_error;
+                    const auto input_size = fs::file_size(target, size_error);
+                    if (size_error || input_size > 64ULL * 1024ULL * 1024ULL)
+                        throw std::runtime_error("Cannot read file or file exceeds the 64 MiB safety limit: " + path);
                     std::ifstream in(target, std::ios::binary);
                     if (!in) throw std::runtime_error("Cannot read file: " + path);
                     std::ostringstream data;
@@ -768,6 +773,11 @@ private:
 };
 
 std::vector<SourceLine> read_source(const fs::path& path) {
+    std::error_code size_error;
+    const auto source_size = fs::file_size(path, size_error);
+    if (size_error) throw std::runtime_error("Cannot inspect source file: " + path.string());
+    if (source_size > 10ULL * 1024ULL * 1024ULL)
+        throw std::runtime_error("Source file exceeds the 10 MiB safety limit.");
     std::ifstream input(path, std::ios::binary);
     if (!input) throw std::runtime_error("Cannot open file: " + path.string());
     std::vector<SourceLine> lines;
