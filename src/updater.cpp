@@ -334,8 +334,8 @@ bool get_latest_version_redirect(std::string& version, std::string& error) {
     const std::string output_sink = "/dev/null";
     const std::string curl = "curl";
 #endif
-    const std::string command = curl + " --fail --location --silent --show-error --retry 2 "
-        "--connect-timeout 15 --max-time 45 --proto '=https' --proto-redir '=https' "
+    const std::string command = curl + " --fail --location --silent --show-error "
+        "--connect-timeout 2 --max-time 3 --proto '=https' --proto-redir '=https' "
         "--user-agent \"FRIDGE-Updater/" FRIDGE_VERSION "\" "
         "--output " + output_sink + " --write-out \"%{url_effective}\" " +
         shell_quote(kLatestReleaseRedirect) + " > " + shell_quote(effective_url_file.string());

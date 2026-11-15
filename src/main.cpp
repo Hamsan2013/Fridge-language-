@@ -1143,11 +1143,12 @@ int run_program(const fs::path& path) {
     fridge_update::ReleaseInfo release;
     std::string error;
     if (!fridge_update::check_latest_version(release, error)) {
-        std::cerr << "[FRG-UPD-REQUIRED] Cannot verify the official FRIDGE release: " << error << "\n"
-                  << "Execution is blocked. Connect to the internet and run: fridge update\n";
-        return 3;
-    }
-    if (fridge_update::update_required(release)) {
+        // The release check is deliberately best-effort: slow or unavailable
+        // networks must never prevent a local FRIDGE program from running.
+        std::cerr << "[FRG-UPD-WARN] Could not check the latest FRIDGE release within 3 seconds: "
+                  << error << "\n"
+                  << "Continuing offline. You can check manually with: fridge update\n";
+    } else if (fridge_update::update_required(release)) {
         std::cerr << "[FRG-UPD-REQUIRED] This FRIDGE build (v" << FRIDGE_VERSION
                   << ") is out of date. The latest release is " << release.latest_version << ".\n"
                   << "Execution is blocked until you install the update. Run: fridge update\n";
