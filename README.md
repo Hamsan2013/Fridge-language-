@@ -61,8 +61,9 @@ Current updater targets:
 | Windows x64 | FRIDGE-Setup-vX.Y.Z.exe |
 | Linux x86_64 / amd64 | FRIDGE-Linux-vX.Y.Z.deb |
 | macOS x86_64 / Apple Silicon | FRIDGE-macOS-vX.Y.Z.pkg |
+| Android arm64 (Termux) | FRIDGE-Android-arm64-vX.Y.Z |
 
-The updater deliberately blocks unsupported platforms and architectures rather than installing the wrong package. Android, ARM Linux, and 32-bit Windows are not updater targets in this release. Internet access is required to run programs because the version gate fails closed when it cannot verify the current official release. fridge check, fridge help, and fridge version remain available without the update check.
+The updater deliberately blocks unsupported platforms and architectures rather than installing the wrong package. Android arm64 is supported for Termux-style command-line installs; ARM Linux and 32-bit Windows are not updater targets. Android needs the Termux curl package (pkg install curl) for release checks and downloads. It updates the running executable atomically in its existing directory, so that directory must be writable by the current user. Internet access is required to run programs because the version gate fails closed when it cannot verify the current official release. fridge check, fridge help, and fridge version remain available without the update check.
 
 The OS installer may request administrator approval. Windows uses the system installer elevation flow; Linux and macOS use their native package installation commands. The VS Code extension retains its own version and update lifecycle; vscode-extension/package.json is not changed by this engine release.
 
