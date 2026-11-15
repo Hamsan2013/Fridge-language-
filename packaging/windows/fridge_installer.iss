@@ -26,10 +26,6 @@ Root: HKCR; Subkey: "FridgeSourceFile"; ValueType: string; ValueData: "FRIDGE So
 Root: HKCR; Subkey: "FridgeSourceFile\DefaultIcon"; ValueType: string; ValueData: "{app}\resources\fridge.ico,0"
 Root: HKCR; Subkey: "FridgeSourceFile\shell\open\command"; ValueType: string; ValueData: """{app}\bin\fridge.exe"" run ""%1"""
 
-Root: HKCR; Subkey: ".uzip"; ValueType: string; ValueData: "FridgePackageFile"; Flags: uninsdeletevalue
-Root: HKCR; Subkey: "FridgePackageFile"; ValueType: string; ValueData: "FRIDGE Application Package"; Flags: uninsdeletekey
-Root: HKCR; Subkey: "FridgePackageFile\DefaultIcon"; ValueType: string; ValueData: "{app}\resources\fridge.ico,0"
-Root: HKCR; Subkey: "FridgePackageFile\shell\open\command"; ValueType: string; ValueData: """{app}\bin\fridge.exe"" run ""%1"""
 
 ; Optional PATH registration
 [Tasks]
@@ -52,3 +48,4 @@ begin
     end;
   end;
 end;
+
