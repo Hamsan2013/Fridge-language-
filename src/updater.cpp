@@ -360,8 +360,19 @@ bool get_latest_version_redirect(std::string& version, std::string& error) {
         error = "GitHub did not redirect to the official FRIDGE release tag.";
         return false;
     }
+
+    // GitHub may append a trailing slash, query string, or fragment to the
+    // final redirect URL. Those URL components are not part of the release
+    // tag and must not be passed to the semantic-version parser.
     version = effective_url.substr(sizeof(kLatestTagPrefix) - 1);
-    if (version_parts(version).empty()) {
+    const size_t suffix = version.find_first_of("?#");
+    if (suffix != std::string::npos) version.erase(suffix);
+    while (!version.empty() && version.back() == '/') version.pop_back();
+
+    // A tag is one path segment only. Reject unexpected extra path components
+    // rather than accidentally accepting a URL outside the release-tag shape.
+    if (version.empty() || version.find('/') != std::string::npos ||
+        version_parts(version).empty()) {
         error = "The official latest release has an invalid version tag.";
         return false;
     }
