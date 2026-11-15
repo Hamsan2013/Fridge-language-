@@ -360,7 +360,7 @@ bool get_latest_version_redirect(std::string& version, std::string& error) {
         error = "GitHub did not redirect to the official FRIDGE release tag.";
         return false;
     }
-    version = effective_url.substr(std::strlen(kLatestTagPrefix));
+    version = effective_url.substr(sizeof(kLatestTagPrefix) - 1);
     if (version_parts(version).empty()) {
         error = "The official latest release has an invalid version tag.";
         return false;
