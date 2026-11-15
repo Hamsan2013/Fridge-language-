@@ -824,7 +824,21 @@ std::vector<SourceLine> read_source(const fs::path& path) {
             source.text = "}";
             continue;
         }
-        if (current.find('{') != std::string::npos || current == "}") continue;
+        bool has_block_open = false;
+        bool quoted = false, escaped_quote = false;
+        for (size_t column = 0; column < current.size(); ++column) {
+            const char ch = current[column];
+            if (quoted) {
+                if (escaped_quote) escaped_quote = false;
+                else if (ch == '\\') escaped_quote = true;
+                else if (ch == '"') quoted = false;
+                continue;
+            }
+            if (ch == '"') quoted = true;
+            else if (ch == '/' && column + 1 < current.size() && current[column + 1] == '/') break;
+            else if (ch == '{') { has_block_open = true; break; }
+        }
+        if (has_block_open || current == "}") continue;
         if (std::regex_match(current, std::regex(R"(^if\s+.+$)", std::regex::icase)) ||
             std::regex_match(current, std::regex(R"(^while\s+.+$)", std::regex::icase)) ||
             std::regex_match(current, std::regex(R"(^repeat\s+.+\s+times$)", std::regex::icase)) ||
