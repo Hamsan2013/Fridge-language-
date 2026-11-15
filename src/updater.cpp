@@ -246,11 +246,25 @@ std::string sha256_file(const fs::path& path) {
 
 std::string platform_asset(const std::string& tag) {
 #ifdef _WIN32
+#  if defined(_M_X64) || defined(__x86_64__)
     return "FRIDGE-Setup-" + tag + ".exe";
-#elif __APPLE__
+#  else
+    return {};
+#  endif
+#elif defined(__APPLE__)
+#  if defined(__x86_64__) || defined(__aarch64__) || defined(__arm64__)
     return "FRIDGE-macOS-" + tag + ".pkg";
-#elif __linux__
+#  else
+    return {};
+#  endif
+#elif defined(__ANDROID__)
+    return {};
+#elif defined(__linux__)
+#  if defined(__x86_64__) || defined(__amd64__)
     return "FRIDGE-Linux-" + tag + ".deb";
+#  else
+    return {};
+#  endif
 #else
     return {};
 #endif
@@ -397,15 +411,7 @@ int run_update_command() {
     }
 
     std::cout << "\nUpdate available: " << info.asset_name << "\n";
-    std::cout << "This installer is selected for your operating system.\n";
-    std::cout << "Install it now? [y/N]: " << std::flush;
-    std::string answer;
-    if (!std::getline(std::cin, answer) || (answer != "y" && answer != "Y" &&
-        answer != "yes" && answer != "YES")) {
-        std::cout << "Update cancelled. FRIDGE programs remain blocked until the update is installed.\n";
-        return 2;
-    }
-
+    std::cout << "Downloading and installing the verified official release now...\n";
     const fs::path temp_dir = fs::temp_directory_path() / make_temp_name("fridge_update");
     std::error_code ec;
     fs::create_directories(temp_dir, ec);
