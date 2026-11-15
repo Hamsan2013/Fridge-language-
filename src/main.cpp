@@ -1002,7 +1002,7 @@ int run_program(const fs::path& path) {
 #ifndef FRIDGE_TESTING
     fridge_update::ReleaseInfo release;
     std::string error;
-    if (!fridge_update::check_latest(release, error)) {
+    if (!fridge_update::check_latest_version(release, error)) {
         std::cerr << "[FRG-UPD-REQUIRED] Cannot verify the official FRIDGE release: " << error << "\n"
                   << "Execution is blocked. Connect to the internet and run: fridge update\n";
         return 3;
