@@ -589,6 +589,39 @@ private:
                     continue;
                 }
 
+                if (std::regex_match(line, match, std::regex(R"(add\s+(.+?)\s+to\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase))) {
+                    const std::string variable = lower(match[2].str());
+                    variables_[variable] = eval(variable + " + (" + match[1].str() + ")");
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"(subtract\s+(.+?)\s+from\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase))) {
+                    const std::string variable = lower(match[2].str());
+                    variables_[variable] = eval(variable + " - (" + match[1].str() + ")");
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"(multiply\s+([A-Za-z_][A-Za-z0-9_]*)\s+by\s+(.+))", std::regex::icase))) {
+                    const std::string variable = lower(match[1].str());
+                    variables_[variable] = eval(variable + " * (" + match[2].str() + ")");
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"(divide\s+([A-Za-z_][A-Za-z0-9_]*)\s+by\s+(.+))", std::regex::icase))) {
+                    const std::string variable = lower(match[1].str());
+                    variables_[variable] = eval(variable + " / (" + match[2].str() + ")");
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"(while\s+(.+?)\s*\{)", std::regex::icase))) {
+                    const std::string condition = match[1].str();
+                    const auto body = collect_block(lines, i);
+                    size_t iterations = 0;
+                    while (is_truthy(eval(condition))) {
+                        if (++iterations > 100000)
+                            throw std::runtime_error("while loop exceeded the 100000-iteration safety limit.");
+                        execute_block(body, depth + 1);
+                        if (returned_) break;
+                    }
+                    continue;
+                }
+
                 if (std::regex_match(line, match, std::regex(R"(fnc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*?)\)\s*\{)", std::regex::icase))) {
                     FunctionDef fn;
                     fn.name = lower(match[1].str());
@@ -646,6 +679,7 @@ private:
                     continue;
                 }
                 if (std::regex_match(line, match, std::regex(R"(return(?:\s+(.+))?)", std::regex::icase))) {
+                    if (recursion_depth_ == 0) throw std::runtime_error("return can only be used inside a function.");
                     return_value_ = match[1].matched ? eval(match[1].str()) : "";
                     returned_ = true;
                     continue;
@@ -658,8 +692,11 @@ private:
                         --recursion_depth_;
                         throw std::runtime_error("Maximum function recursion depth exceeded.");
                     }
-                    const auto args = split_arguments(match[2].str());
-                    const auto& fn = found->second;
+                    const auto raw_args = split_arguments(match[2].str());
+                    std::vector<std::string> args;
+                    args.reserve(raw_args.size());
+                    for (const auto& raw_arg : raw_args) args.push_back(eval(raw_arg));
+                    const FunctionDef fn = found->second;
                     if (args.size() != fn.parameters.size()) {
                         --recursion_depth_;
                         throw std::runtime_error("Function '" + name + "' expects " +
@@ -672,7 +709,7 @@ private:
                         const std::string parameter = lower(fn.parameters[a]);
                         const auto old = variables_.find(parameter);
                         old_values.push_back({parameter, old != variables_.end(), old != variables_.end() ? old->second : std::string()});
-                        variables_[parameter] = eval(args[a]);
+                        variables_[parameter] = args[a];
                     }
                     const bool old_returned = returned_;
                     const std::string old_return_value = return_value_;
@@ -782,7 +819,8 @@ int check_source(const fs::path& path) {
             starts_with_ci(line, "add ") || starts_with_ci(line, "read file ") ||
             starts_with_ci(line, "delete file ") || starts_with_ci(line, "del(") ||
             starts_with_ci(line, "stop with error ") || starts_with_ci(line, "if ") ||
-            starts_with_ci(line, "otherwise") || starts_with_ci(line, "repeat ") ||
+            starts_with_ci(line, "otherwise") || starts_with_ci(line, "repeat ") || starts_with_ci(line, "while ") ||
+            starts_with_ci(line, "subtract ") || starts_with_ci(line, "multiply ") || starts_with_ci(line, "divide ") ||
             starts_with_ci(line, "attempt") || starts_with_ci(line, "error") ||
             starts_with_ci(line, "fnc ") || starts_with_ci(line, "return") ||
             starts_with_ci(line, "draw ") || starts_with_ci(line, "load 3d ") ||
