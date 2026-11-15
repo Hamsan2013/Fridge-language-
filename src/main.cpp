@@ -326,7 +326,7 @@ private:
     std::string parse_unary() {
         if (symbol("-")) { ++position_; double v = 0; const auto s = parse_unary(); if (!parse_number(s, v)) throw std::runtime_error("Unary minus requires a number."); return number_string(-v); }
         if (symbol("+")) { ++position_; double v = 0; const auto s = parse_unary(); if (!parse_number(s, v)) throw std::runtime_error("Unary plus requires a number."); return number_string(v); }
-        if (word("not") || symbol("!")) { ++position_; return is_truthy(parse_unary()) ? "false" : "true"; }
+        if (word("not") || symbol("!")) { ++position_; return truthy(parse_unary()) ? "false" : "true"; }
         return parse_primary();
     }
 
