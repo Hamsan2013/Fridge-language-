@@ -773,6 +773,27 @@ std::vector<SourceLine> read_source(const fs::path& path) {
     }
     if (!input.eof() && input.fail()) throw std::runtime_error("Error while reading source file: " + path.string());
     if (lines.size() > 100000) throw std::runtime_error("Source file exceeds the 100,000-line safety limit.");
+
+    // Normalize the documented legacy "end if" / "end repeat" block closers
+    // and block headers into the v0.5 curly-brace representation.
+    for (auto& source : lines) {
+        const std::string current = trim(source.text);
+        static const std::regex legacy_end(R"(^end\s+(if|repeat|function|attempt|while|for|otherwise|error)$)", std::regex::icase);
+        std::smatch match;
+        if (std::regex_match(current, match, legacy_end)) {
+            source.text = "}";
+            continue;
+        }
+        if (current.find('{') != std::string::npos || current == "}") continue;
+        if (std::regex_match(current, std::regex(R"(^if\s+.+$)", std::regex::icase)) ||
+            std::regex_match(current, std::regex(R"(^while\s+.+$)", std::regex::icase)) ||
+            std::regex_match(current, std::regex(R"(^repeat\s+.+\s+times$)", std::regex::icase)) ||
+            std::regex_match(current, std::regex(R"(^fnc\s+[A-Za-z_][A-Za-z0-9_]*\s*\(.*\)$)", std::regex::icase)) ||
+            lower(current) == "attempt" || lower(current) == "otherwise" ||
+            std::regex_match(current, std::regex(R"(^error\s*\(\s*\)$)", std::regex::icase))) {
+            source.text += " {";
+        }
+    }
     return lines;
 }
 
