@@ -152,12 +152,12 @@ jobs:
             -DBUILD_TESTING=OFF \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build build-android --config Release --parallel
-          install -m 755 build-android/fridge "FRIDGE-Android-arm64-v\${{ steps.version.outputs.VERSION }}"
-          file "FRIDGE-Android-arm64-v\${{ steps.version.outputs.VERSION }}"
+          install -m 755 build-android/fridge "FRIDGE-Android-arm64-v${{ steps.version.outputs.VERSION }}"
+          file "FRIDGE-Android-arm64-v${{ steps.version.outputs.VERSION }}"
       - uses: actions/upload-artifact@v4
         with:
           name: release-android
-          path: FRIDGE-Android-arm64-v\${{ steps.version.outputs.VERSION }}
+          path: FRIDGE-Android-arm64-v${{ steps.version.outputs.VERSION }}
           if-no-files-found: error
 
   publish:
