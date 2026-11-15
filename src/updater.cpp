@@ -277,9 +277,14 @@ bool run_curl(const std::string& url, const fs::path& output) {
     const std::string curl = "curl";
 #endif
     const std::string command = curl + " --fail --location --silent --show-error --retry 2 "
+        "--connect-timeout 20 --max-time 600 --max-filesize 268435456 "
+        "--proto '=https' --proto-redir '=https' "
         "--user-agent \"FRIDGE-Updater/" FRIDGE_VERSION "\" " +
         shell_quote(url) + " --output " + shell_quote(output.string());
-    return std::system(command.c_str()) == 0 && fs::exists(output) && fs::file_size(output) > 0;
+    if (std::system(command.c_str()) != 0 || !fs::exists(output)) return false;
+    std::error_code size_error;
+    const auto size = fs::file_size(output, size_error);
+    return !size_error && size > 0 && size <= 256ULL * 1024ULL * 1024ULL;
 }
 
 bool install_asset(const fs::path& asset) {
@@ -301,7 +306,7 @@ bool install_asset(const fs::path& asset) {
 
 bool check_latest(ReleaseInfo& info, std::string& error) {
     info.current_version = FRIDGE_VERSION;
-    const fs::path temp = fs::temp_directory_path() / make_temp_name("fridge_release") .append(".json");
+    const fs::path temp = fs::temp_directory_path() / (make_temp_name("fridge_release") + ".json");
     if (!run_curl(kReleaseApi, temp)) {
         error = "Could not contact the official FRIDGE Releases API. Check your internet connection.";
         return false;
@@ -441,8 +446,13 @@ int run_update_command() {
     std::cout << "SHA-256 verified. Launching the platform installer...\n";
     if (!install_asset(asset)) {
         std::cerr << "[FRG-UPD-005] Could not launch or install the update. Existing FRIDGE files were not intentionally modified.\n";
+        fs::remove_all(temp_dir, ec);
         return 1;
     }
+
+#ifndef _WIN32
+    fs::remove_all(temp_dir, ec);
+#endif
 
 #ifdef _WIN32
     std::cout << "The Windows installer has been launched. Complete its prompts, then reopen FRIDGE.\n";
