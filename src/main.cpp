@@ -171,8 +171,15 @@ private:
                 const size_t start = i++;
                 while (i < input.size() && (std::isalnum(static_cast<unsigned char>(input[i])) || input[i] == '_')) ++i;
                 tokens_.push_back({Token::Kind::Word, input.substr(start, i - start)});
-            } else if (std::string("+-*/%()").find(input[i]) != std::string::npos) {
-                tokens_.push_back({Token::Kind::Symbol, std::string(1, input[i++])});
+             } else if (std::string("+-*/%()><=!&|").find(input[i]) != std::string::npos) {
+                std::string op(1, input[i++]);
+                if ((op == ">" || op == "<" || op == "=" || op == "!" || op == "&" || op == "|") &&
+                    i < input.size() && input[i] == (op == "&" ? '&' : op == "|" ? '|' : '=')) {
+                    op += input[i++];
+                } else if (op == "=" || op == "!" || op == "&" || op == "|") {
+                    throw std::runtime_error("Expected a second character after operator '" + op + "'.");
+                }
+                tokens_.push_back({Token::Kind::Symbol, op});
             } else {
                 throw std::runtime_error(std::string("Invalid character in expression: ") + input[i]);
             }
@@ -216,7 +223,7 @@ private:
 
     std::string parse_or() {
         std::string left = parse_and();
-        while (word("or")) {
+        while (word("or") || symbol("||")) {
             ++position_;
             const std::string right = parse_and();
             const bool a = truthy(left), b = truthy(right);
@@ -227,7 +234,7 @@ private:
 
     std::string parse_and() {
         std::string left = parse_comparison();
-        while (word("and")) {
+        while (word("and") || symbol("&&")) {
             ++position_;
             const std::string right = parse_comparison();
             const bool a = truthy(left), b = truthy(right);
@@ -239,7 +246,10 @@ private:
     std::string parse_comparison() {
         std::string left = parse_join();
         std::string op;
-        if (word("is")) {
+        if (symbol("==") || symbol("!=") || symbol(">") || symbol("<") || symbol(">=") || symbol("<=")) {
+            op = current().value;
+            ++position_;
+        } else if (word("is")) {
             ++position_;
             if (word("not")) { ++position_; op = "!="; }
             else if (word("greater") && word("than", 1)) { take_phrase(); op = ">"; }
@@ -316,7 +326,7 @@ private:
     std::string parse_unary() {
         if (symbol("-")) { ++position_; double v = 0; const auto s = parse_unary(); if (!parse_number(s, v)) throw std::runtime_error("Unary minus requires a number."); return number_string(-v); }
         if (symbol("+")) { ++position_; double v = 0; const auto s = parse_unary(); if (!parse_number(s, v)) throw std::runtime_error("Unary plus requires a number."); return number_string(v); }
-        if (word("not")) { ++position_; return truthy(parse_unary()) ? "false" : "true"; }
+        if (word("not") || symbol("!")) { ++position_; return is_truthy(parse_unary()) ? "false" : "true"; }
         return parse_primary();
     }
 
