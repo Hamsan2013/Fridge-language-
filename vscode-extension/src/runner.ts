@@ -51,9 +51,19 @@ export function findFridgeExecutable(): string | null {
     return null;
 }
 
-export function runFridgeFile(document: vscode.TextDocument): void {
-    if (document.isDirty) {
-        document.save();
+export async function runFridgeFile(document: vscode.TextDocument): Promise<void> {
+    if (document.isUntitled) {
+        const saved = await document.save();
+        if (!saved) {
+            vscode.window.showWarningMessage('Save the FRIDGE file before running it.');
+            return;
+        }
+    } else if (document.isDirty) {
+        const saved = await document.save();
+        if (!saved) {
+            vscode.window.showWarningMessage('FRIDGE could not run because the file was not saved.');
+            return;
+        }
     }
 
     const exe = findFridgeExecutable();
@@ -69,7 +79,11 @@ export function runFridgeFile(document: vscode.TextDocument): void {
         return;
     }
 
-    const filePath = document.fileName;
+    const filePath = document.uri.fsPath;
+    if (!filePath || !path.isAbsolute(filePath) || !fs.existsSync(filePath)) {
+        vscode.window.showErrorMessage('Save this FRIDGE source file to disk before running it.');
+        return;
+    }
     const workingDir = path.dirname(filePath);
     const fileContent = document.getText();
 
@@ -83,7 +97,7 @@ export function runFridgeFile(document: vscode.TextDocument): void {
     if (!outputPanel) {
         outputPanel = vscode.window.createWebviewPanel(
             'fridgeStudioOutput',
-            'FRIDGE v0.5.0 Engine & Output',
+            'FRIDGE Engine & Output',
             vscode.ViewColumn.Beside,
             { enableScripts: true, retainContextWhenHidden: true }
         );
@@ -96,15 +110,31 @@ export function runFridgeFile(document: vscode.TextDocument): void {
 
     outputPanel.webview.html = getStudioHtml(path.basename(filePath));
 
-    if (/\bask\b/i.test(fileContent)) {
+    const hasInteractiveAsk = fileContent.split(/\r?\n/).some(rawLine => {
+        const line = rawLine.replace(/\/\/.*$/, '').trim();
+        return /^ask\s+/i.test(line);
+    });
+
+    if (hasInteractiveAsk) {
         const terminal = vscode.window.terminals.find(t => t.name === 'FRIDGE Terminal')
             || vscode.window.createTerminal('FRIDGE Terminal');
         terminal.show(true);
-        terminal.sendText('cd "' + workingDir + '"');
-        const cmd = process.platform === 'win32'
-            ? '& "' + exe + '" run "' + filePath + '"'
-            : '"' + exe + '" run "' + filePath + '"';
-        terminal.sendText(cmd);
+        const quote = (value: string): string => {
+            if (process.platform === 'win32') {
+                return "'" + value.replace(/'/g, "''") + "'";
+            }
+            return "'" + value.replace(/'/g, "'\\''") + "'";
+        };
+        if (process.platform === 'win32') {
+            terminal.sendText('Set-Location -LiteralPath ' + quote(workingDir));
+            terminal.sendText('& ' + quote(exe) + ' run ' + quote(filePath));
+        } else {
+            terminal.sendText('cd -- ' + quote(workingDir) + ' && ' +
+                quote(exe) + ' run ' + quote(filePath));
+        }
+        // Interactive input must be owned by the terminal. Do not launch a
+        // second background process that executes the same script again.
+        return;
     }
 
     const precommands = extractVisualConstructs(fileContent, workingDir);
@@ -328,7 +358,7 @@ function getStudioHtml(fileName: string): string {
         '    </div>',
         '  </div>',
         '  <div id="console-container">',
-        '    <div class="log-line log-sys">>>> Executing ' + fileName + ' in FRIDGE v0.5.0 Engine...</div>',
+        '    <div class="log-line log-sys">>>> Executing ' + fileName + ' in FRIDGE Engine...</div>',
         '  </div>',
         '<script>',
         '  const stageArea = document.getElementById("stage-area");',
