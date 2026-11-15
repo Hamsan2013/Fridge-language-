@@ -268,7 +268,7 @@ function extractVisualConstructs(source: string, workingDir: string): Array<Reco
         const modelMatch = line.match(/^load\s+3d\s+model\s+from\s+"([^"]+)"\s+as\s+([a-zA-Z0-9_]+)/i);
         if (modelMatch) {
             const fullPath = path.resolve(workingDir, modelMatch[1]);
-            const meshData = loadObjGeometry(fullPath);
+            const meshData = loadObjGeometry(fullPath, workingDir);
             messages.push({
                 type: 'spawn3D',
                 name: modelMatch[2] + ' (' + path.basename(modelMatch[1]) + ')',
@@ -324,13 +324,14 @@ function extractVisualConstructs(source: string, workingDir: string): Array<Reco
 }
 
 function getStudioHtml(fileName: string): string {
-    const safeFileName = fileName.replace(/[&<>"']/g, character => ({
+    const htmlEscapes: Record<string, string> = {
         '&': '&amp;',
         '<': '&lt;',
         '>': '&gt;',
         '"': '&quot;',
         "'": '&#39;'
-    }[character] || character));
+    };
+    const safeFileName = fileName.replace(/[&<>"']/g, character => htmlEscapes[character] || character);
 
     return [
         '<!DOCTYPE html>',
@@ -379,7 +380,7 @@ function getStudioHtml(fileName: string): string {
         '    </div>',
         '  </div>',
         '  <div id="console-container">',
-        '    <div class="log-line log-sys">>>> Executing ' + fileName + ' in FRIDGE Engine...</div>',
+        '    <div class="log-line log-sys">>>> Executing ' + safeFileName + ' in FRIDGE Engine...</div>',
         '  </div>',
         '<script>',
         '  const stageArea = document.getElementById("stage-area");',
