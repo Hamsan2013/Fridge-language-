@@ -270,8 +270,8 @@ private:
         double a = 0, b = 0;
         const bool numeric = parse_number(left, a) && parse_number(right, b);
         bool result = false;
-        if (op == "==") result = lower(left) == lower(right);
-        else if (op == "!=") result = lower(left) != lower(right);
+        if (op == "==") result = left == right;
+        else if (op == "!=") result = left != right;
         else if (numeric && op == ">") result = a > b;
         else if (numeric && op == "<") result = a < b;
         else if (numeric && op == ">=") result = a >= b;
@@ -501,6 +501,8 @@ private:
         std::string tail = header.substr(opening + 1);
         size_t close = scan_from(tail, 0);
         if (close != std::string::npos) {
+            const std::string inline_body = trim(tail.substr(0, close));
+            if (!inline_body.empty()) body.push_back({inline_body, lines[index].number});
             if (!trim(tail.substr(close + 1)).empty())
                 throw std::runtime_error("Put code after a closing block brace on a new line (line " +
                                          std::to_string(lines[index].number) + ").");
@@ -605,24 +607,41 @@ private:
                     continue;
                 }
 
+                auto mutate_number = [&](const std::string& variable_name, const std::string& operand_expression, char operation) {
+                    const std::string variable = lower(variable_name);
+                    const auto existing = variables_.find(variable);
+                    if (existing == variables_.end())
+                        throw std::runtime_error("Math operation requires an existing variable: " + variable_name);
+                    double left = 0, right = 0;
+                    const std::string operand = eval(operand_expression);
+                    if (!parse_number(existing->second, left) || !parse_number(operand, right))
+                        throw std::runtime_error("Natural math operations require numeric values.");
+                    if (operation == '/' && right == 0)
+                        throw std::runtime_error("Division by zero.");
+                    double result = 0;
+                    switch (operation) {
+                        case '+': result = left + right; break;
+                        case '-': result = left - right; break;
+                        case '*': result = left * right; break;
+                        case '/': result = left / right; break;
+                        default: throw std::runtime_error("Invalid numeric mutation operation.");
+                    }
+                    variables_[variable] = number_string(result);
+                };
                 if (std::regex_match(line, match, std::regex(R"(add\s+(.+?)\s+to\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase))) {
-                    const std::string variable = lower(match[2].str());
-                    variables_[variable] = eval(variable + " + (" + match[1].str() + ")");
+                    mutate_number(match[2].str(), match[1].str(), '+');
                     continue;
                 }
                 if (std::regex_match(line, match, std::regex(R"(subtract\s+(.+?)\s+from\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase))) {
-                    const std::string variable = lower(match[2].str());
-                    variables_[variable] = eval(variable + " - (" + match[1].str() + ")");
+                    mutate_number(match[2].str(), match[1].str(), '-');
                     continue;
                 }
                 if (std::regex_match(line, match, std::regex(R"(multiply\s+([A-Za-z_][A-Za-z0-9_]*)\s+by\s+(.+))", std::regex::icase))) {
-                    const std::string variable = lower(match[1].str());
-                    variables_[variable] = eval(variable + " * (" + match[2].str() + ")");
+                    mutate_number(match[1].str(), match[2].str(), '*');
                     continue;
                 }
                 if (std::regex_match(line, match, std::regex(R"(divide\s+([A-Za-z_][A-Za-z0-9_]*)\s+by\s+(.+))", std::regex::icase))) {
-                    const std::string variable = lower(match[1].str());
-                    variables_[variable] = eval(variable + " / (" + match[2].str() + ")");
+                    mutate_number(match[1].str(), match[2].str(), '/');
                     continue;
                 }
                 if (std::regex_match(line, match, std::regex(R"(while\s+(.+?)\s*\{)", std::regex::icase))) {
@@ -816,22 +835,58 @@ std::vector<SourceLine> read_source(const fs::path& path) {
         }
     }
 
-    // Normalize the common compact otherwise branch into separate lines.
-    const std::regex inline_otherwise(R"(\}\s*otherwise\s*\{)", std::regex::icase);
+    // Normalize compact otherwise branches only when the sequence appears
+    // outside quoted strings and comments; text inside a string is never syntax.
     std::vector<SourceLine> normalized;
     for (const auto& source : lines) {
-        std::smatch branch;
-        if (std::regex_search(source.text, branch, inline_otherwise)) {
-            const size_t close_pos = static_cast<size_t>(branch.position());
-            const size_t after_close = close_pos + 1;
-            const size_t branch_end = close_pos + static_cast<size_t>(branch.length());
-            normalized.push_back({source.text.substr(0, after_close), source.number});
-            normalized.push_back({trim(source.text.substr(after_close, branch_end - after_close)), source.number});
-            const std::string trailing = trim(source.text.substr(branch_end));
-            if (!trailing.empty()) normalized.push_back({trailing, source.number});
-        } else {
-            normalized.push_back(source);
+        size_t close_pos = std::string::npos;
+        size_t otherwise_end = std::string::npos;
+        bool in_string = false, escaped = false;
+        for (size_t column = 0; column < source.text.size(); ++column) {
+            const char ch = source.text[column];
+            if (in_string) {
+                if (escaped) escaped = false;
+                else if (ch == '\\') escaped = true;
+                else if (ch == '"') in_string = false;
+                continue;
+            }
+            if (ch == '"') {
+                in_string = true;
+                continue;
+            }
+            if (ch == '/' && column + 1 < source.text.size() && source.text[column + 1] == '/') break;
+            if (ch != '}') continue;
+
+            size_t word_start = column + 1;
+            while (word_start < source.text.size() &&
+                   std::isspace(static_cast<unsigned char>(source.text[word_start]))) ++word_start;
+            static const std::string otherwise_word = "otherwise";
+            if (word_start + otherwise_word.size() > source.text.size()) continue;
+            const std::string candidate = lower(source.text.substr(word_start, otherwise_word.size()));
+            if (candidate != otherwise_word) continue;
+
+            size_t word_end = word_start + otherwise_word.size();
+            if (word_end < source.text.size() &&
+                (std::isalnum(static_cast<unsigned char>(source.text[word_end])) || source.text[word_end] == '_')) continue;
+            size_t open_brace = word_end;
+            while (open_brace < source.text.size() &&
+                   std::isspace(static_cast<unsigned char>(source.text[open_brace]))) ++open_brace;
+            if (open_brace < source.text.size() && source.text[open_brace] == '{') {
+                close_pos = column;
+                otherwise_end = open_brace;
+                break;
+            }
         }
+
+        if (close_pos == std::string::npos) {
+            normalized.push_back(source);
+            continue;
+        }
+        normalized.push_back({source.text.substr(0, close_pos + 1), source.number});
+        const std::string branch_header = trim(source.text.substr(close_pos + 1, otherwise_end - close_pos - 1)) + " {";
+        normalized.push_back({branch_header, source.number});
+        const std::string trailing = trim(source.text.substr(otherwise_end + 1));
+        if (!trailing.empty()) normalized.push_back({trailing, source.number});
     }
     return normalized;
 }
