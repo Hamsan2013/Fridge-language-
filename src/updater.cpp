@@ -25,6 +25,10 @@ namespace fridge_update {
 namespace {
 constexpr const char* kReleaseApi =
     "https://api.github.com/repos/Hamsan2013/Fridge-language-/releases/latest";
+constexpr const char* kLatestReleaseRedirect =
+    "https://github.com/Hamsan2013/Fridge-language-/releases/latest";
+constexpr const char* kLatestTagPrefix =
+    "https://github.com/Hamsan2013/Fridge-language-/releases/tag/";
 constexpr const char* kDownloadPrefix =
     "https://github.com/Hamsan2013/Fridge-language-/releases/download/";
 
@@ -142,6 +146,30 @@ bool read_all(const fs::path& path, std::string& data) {
 std::string make_temp_name(const std::string& stem) {
     const auto ticks = std::chrono::high_resolution_clock::now().time_since_epoch().count();
     return stem + "_" + std::to_string(static_cast<unsigned long long>(ticks));
+}
+
+bool create_private_temp_dir(fs::path& path, std::string& error) {
+    std::error_code ec;
+    path = fs::temp_directory_path(ec);
+    if (ec) {
+        error = "Cannot locate the operating-system temporary directory: " + ec.message();
+        return false;
+    }
+    path /= make_temp_name("fridge_update");
+    if (!fs::create_directory(path, ec) || ec) {
+        error = "Cannot create a private temporary directory: " +
+            (ec ? ec.message() : std::string("the temporary name already exists"));
+        return false;
+    }
+#ifndef _WIN32
+    fs::permissions(path, fs::perms::owner_all, fs::perm_options::replace, ec);
+    if (ec) {
+        fs::remove_all(path, ec);
+        error = "Cannot secure the temporary directory.";
+        return false;
+    }
+#endif
+    return true;
 }
 
 // Compact SHA-256 implementation used to verify the exact release asset digest
@@ -274,21 +302,69 @@ std::string platform_asset(const std::string& tag) {
 #endif
 }
 
-bool run_curl(const std::string& url, const fs::path& output) {
+bool run_curl(const std::string& url, const fs::path& output,
+              uint64_t max_bytes = 256ULL * 1024ULL * 1024ULL,
+              unsigned int timeout_seconds = 600) {
 #ifdef _WIN32
     const std::string curl = "curl.exe";
 #else
     const std::string curl = "curl";
 #endif
     const std::string command = curl + " --fail --location --silent --show-error --retry 2 "
-        "--connect-timeout 20 --max-time 600 --max-filesize 268435456 "
-        "--proto '=https' --proto-redir '=https' "
+        "--connect-timeout 20 --max-time " + std::to_string(timeout_seconds) +
+        " --max-filesize " + std::to_string(max_bytes) +
+        " --proto '=https' --proto-redir '=https' "
         "--user-agent \"FRIDGE-Updater/" FRIDGE_VERSION "\" " +
         shell_quote(url) + " --output " + shell_quote(output.string());
     if (std::system(command.c_str()) != 0 || !fs::exists(output)) return false;
     std::error_code size_error;
     const auto size = fs::file_size(output, size_error);
-    return !size_error && size > 0 && size <= 256ULL * 1024ULL * 1024ULL;
+    return !size_error && size > 0 && size <= max_bytes;
+}
+
+bool get_latest_version_redirect(std::string& version, std::string& error) {
+    fs::path temp_dir;
+    if (!create_private_temp_dir(temp_dir, error)) return false;
+    const fs::path effective_url_file = temp_dir / "effective-url.txt";
+#ifdef _WIN32
+    const std::string output_sink = "NUL";
+    const std::string curl = "curl.exe";
+#else
+    const std::string output_sink = "/dev/null";
+    const std::string curl = "curl";
+#endif
+    const std::string command = curl + " --fail --location --silent --show-error --retry 2 "
+        "--connect-timeout 15 --max-time 45 --proto '=https' --proto-redir '=https' "
+        "--user-agent \"FRIDGE-Updater/" FRIDGE_VERSION "\" "
+        "--output " + output_sink + " --write-out \"%{url_effective}\" " +
+        shell_quote(kLatestReleaseRedirect) + " > " + shell_quote(effective_url_file.string());
+    const int status = std::system(command.c_str());
+    std::string effective_url;
+    const bool loaded = status == 0 && read_all(effective_url_file, effective_url);
+    std::error_code ec;
+    fs::remove_all(temp_dir, ec);
+    if (!loaded || effective_url.size() > 2048) {
+        error = "Could not resolve the official latest-release URL.";
+        return false;
+    }
+
+    while (!effective_url.empty() &&
+           std::isspace(static_cast<unsigned char>(effective_url.back()))) effective_url.pop_back();
+    size_t first = 0;
+    while (first < effective_url.size() &&
+           std::isspace(static_cast<unsigned char>(effective_url[first]))) ++first;
+    effective_url.erase(0, first);
+
+    if (effective_url.rfind(kLatestTagPrefix, 0) != 0) {
+        error = "GitHub did not redirect to the official FRIDGE release tag.";
+        return false;
+    }
+    version = effective_url.substr(std::strlen(kLatestTagPrefix));
+    if (version_parts(version).empty()) {
+        error = "The official latest release has an invalid version tag.";
+        return false;
+    }
+    return true;
 }
 
 bool install_asset(const fs::path& asset, const std::string& invoked_path) {
@@ -353,18 +429,27 @@ bool install_asset(const fs::path& asset, const std::string& invoked_path) {
 }
 } // namespace
 
+bool check_latest_version(ReleaseInfo& info, std::string& error) {
+    info.current_version = FRIDGE_VERSION;
+    return get_latest_version_redirect(info.latest_version, error);
+}
+
 bool check_latest(ReleaseInfo& info, std::string& error) {
     info.current_version = FRIDGE_VERSION;
-    const fs::path temp = fs::temp_directory_path() / (make_temp_name("fridge_release") + ".json");
-    if (!run_curl(kReleaseApi, temp)) {
-        error = "Could not contact the official FRIDGE Releases API. Check your internet connection.";
+    fs::path temp_dir;
+    if (!create_private_temp_dir(temp_dir, error)) return false;
+    const fs::path temp = temp_dir / "release.json";
+    if (!run_curl(kReleaseApi, temp, 4ULL * 1024ULL * 1024ULL, 45)) {
+        std::error_code cleanup_error;
+        fs::remove_all(temp_dir, cleanup_error);
+        error = "Could not contact or read the official FRIDGE Releases API. Check your internet connection.";
         return false;
     }
 
     std::string json;
     const bool loaded = read_all(temp, json);
     std::error_code ec;
-    fs::remove(temp, ec);
+    fs::remove_all(temp_dir, ec);
     if (!loaded || json.empty()) {
         error = "The latest release response could not be read.";
         return false;
@@ -465,21 +550,12 @@ int run_update_command(const std::string& executable_path) {
 
     std::cout << "\nUpdate available: " << info.asset_name << "\n";
     std::cout << "Downloading and installing the verified official release now...\n";
-    const fs::path temp_dir = fs::temp_directory_path() / make_temp_name("fridge_update");
+    fs::path temp_dir;
+    if (!create_private_temp_dir(temp_dir, error)) {
+        std::cerr << "[FRG-UPD-002] " << error << "\n";
+        return 1;
+    }
     std::error_code ec;
-    if (!fs::create_directory(temp_dir, ec) || ec) {
-        std::cerr << "[FRG-UPD-002] Cannot create a private update staging directory: "
-                  << (ec ? ec.message() : "the temporary name already exists") << "\n";
-        return 1;
-    }
-#ifndef _WIN32
-    fs::permissions(temp_dir, fs::perms::owner_all, fs::perm_options::replace, ec);
-    if (ec) {
-        fs::remove_all(temp_dir, ec);
-        std::cerr << "[FRG-UPD-002] Cannot secure the update staging directory.\n";
-        return 1;
-    }
-#endif
     const fs::path asset = temp_dir / info.asset_name;
 
     std::cout << "Downloading official installer...\n";
