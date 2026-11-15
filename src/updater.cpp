@@ -258,7 +258,11 @@ std::string platform_asset(const std::string& tag) {
     return {};
 #  endif
 #elif defined(__ANDROID__)
+#  if defined(__aarch64__)
+    return "FRIDGE-Android-arm64-" + tag;
+#  else
     return {};
+#  endif
 #elif defined(__linux__)
 #  if defined(__x86_64__) || defined(__amd64__)
     return "FRIDGE-Linux-" + tag + ".deb";
@@ -287,7 +291,50 @@ bool run_curl(const std::string& url, const fs::path& output) {
     return !size_error && size > 0 && size <= 256ULL * 1024ULL * 1024ULL;
 }
 
-bool install_asset(const fs::path& asset) {
+bool install_asset(const fs::path& asset, const std::string& invoked_path) {
+#ifdef __ANDROID__
+    std::error_code ec;
+    fs::path executable = fs::canonical("/proc/self/exe", ec);
+    if (ec || !fs::is_regular_file(executable, ec) || ec) {
+        ec.clear();
+        executable = fs::canonical(fs::u8path(invoked_path), ec);
+    }
+    if (ec || executable.empty() || !fs::is_regular_file(executable, ec) || ec) {
+        std::cerr << "Cannot resolve the running FRIDGE executable for an in-place Android update.\n";
+        return false;
+    }
+
+    fs::path staged = executable;
+    staged += "." + make_temp_name("new");
+    if (!fs::copy_file(asset, staged, fs::copy_options::none, ec) || ec) {
+        std::cerr << "Cannot stage the Android update next to the installed executable: " << ec.message() << "\n";
+        fs::remove(staged, ec);
+        return false;
+    }
+
+    const auto current_permissions = fs::status(executable, ec).permissions();
+    if (ec) {
+        fs::remove(staged, ec);
+        return false;
+    }
+    fs::permissions(staged, current_permissions | fs::perms::owner_exec |
+                    fs::perms::group_exec | fs::perms::others_exec,
+                    fs::perm_options::replace, ec);
+    if (ec) {
+        fs::remove(staged, ec);
+        return false;
+    }
+
+    // POSIX rename atomically switches the path while the old running image
+    // remains mapped until this process exits.
+    fs::rename(staged, executable, ec);
+    if (ec) {
+        std::cerr << "Atomic Android executable replacement failed: " << ec.message() << "\n";
+        fs::remove(staged, ec);
+        return false;
+    }
+    return true;
+#else
 #ifdef _WIN32
     // The installer uses restartreplace for the running CLI executable.
     const std::string command = "start \"\" /B " + shell_quote(asset.string()) +
@@ -300,7 +347,9 @@ bool install_asset(const fs::path& asset) {
     (void)asset;
     return false;
 #endif
+    (void)invoked_path;
     return std::system(command.c_str()) == 0;
+#endif
 }
 } // namespace
 
@@ -399,7 +448,7 @@ bool update_required(const ReleaseInfo& info) {
     return compare_versions(info.latest_version, info.current_version) > 0;
 }
 
-int run_update_command() {
+int run_update_command(const std::string& executable_path) {
     ReleaseInfo info;
     std::string error;
     if (!check_latest(info, error)) {
@@ -443,7 +492,7 @@ int run_update_command() {
     }
 
     std::cout << "SHA-256 verified. Launching the platform installer...\n";
-    if (!install_asset(asset)) {
+    if (!install_asset(asset, executable_path)) {
         std::cerr << "[FRG-UPD-005] Could not launch or install the update. Existing FRIDGE files were not intentionally modified.\n";
         fs::remove_all(temp_dir, ec);
         return 1;
@@ -455,7 +504,9 @@ int run_update_command() {
 
 #ifdef _WIN32
     std::cout << "The Windows installer has been launched. Complete its prompts, then reopen FRIDGE.\n";
-#elif __APPLE__
+#elif defined(__ANDROID__)
+    std::cout << "FRIDGE was updated in place. Reopen the application or terminal session.\n";
+#elif defined(__APPLE__)
     std::cout << "The macOS installer has completed. Reopen FRIDGE.\n";
 #else
     std::cout << "The Linux package installer has completed. Reopen FRIDGE.\n";
