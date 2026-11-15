@@ -836,42 +836,135 @@ int check_source(const fs::path& path) {
         return 1;
     }
 
-    const std::regex bad_fnc(R"(^(?:fnc)\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\)\s*\{)");
-    const std::regex attempt(R"(^attempt\s*\{)");
-    const std::regex catch_block(R"(^error\s*\(\s*\)\s*\{)");
+    auto validate_expression = [](const std::string& expression, const SourceLine& source) {
+        try {
+            (void)ExpressionParser(expression, Interpreter::Variables{}).parse();
+            return true;
+        } catch (const std::exception& error) {
+            std::cerr << "FRG-CHECK-008: Invalid expression at line " << source.number
+                      << ": " << error.what() << "\n";
+            return false;
+        }
+    };
+
+    const std::regex fnc_header(R"(^fnc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*?)\)\s*\{$)", std::regex::icase);
+    const std::regex attempt_header(R"(^attempt\s*\{$)", std::regex::icase);
+    const std::regex catch_header(R"(^error\s*\(\s*\)\s*\{$)", std::regex::icase);
+    const std::regex declaration(R"((?:rem|remember)\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(.+))", std::regex::icase);
+    const std::regex assignment(R"(set\s+([A-Za-z_][A-Za-z0-9_]*)\s+to\s+(.+))", std::regex::icase);
+    const std::regex output(R"(show\s+(.+))", std::regex::icase);
+    const std::regex input(R"(ask\s+(.+)\s+as\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase);
+    const std::regex stop_error(R"(stop\s+with\s+error\s+(.+))", std::regex::icase);
+    const std::regex create_file(R"(create\s+file\s+(.+?)\s+with\s+(.+))", std::regex::icase);
+    const std::regex append_file(R"(add\s+(.+?)\s+to\s+file\s+(.+))", std::regex::icase);
+    const std::regex read_file(R"(read\s+file\s+(.+?)\s+into\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase);
+    const std::regex delete_file(R"(delete\s+file\s+(.+))", std::regex::icase);
+    const std::regex delete_call(R"(del\s*\(\s*(.+?)\s*\))", std::regex::icase);
+    const std::regex if_header(R"(if\s+(.+?)\s*\{)", std::regex::icase);
+    const std::regex while_header(R"(while\s+(.+?)\s*\{)", std::regex::icase);
+    const std::regex repeat_header(R"(repeat\s+(.+?)\s+times\s*\{)", std::regex::icase);
+    const std::regex subtract(R"(subtract\s+(.+?)\s+from\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase);
+    const std::regex multiply(R"(multiply\s+([A-Za-z_][A-Za-z0-9_]*)\s+by\s+(.+))", std::regex::icase);
+    const std::regex divide(R"(divide\s+([A-Za-z_][A-Za-z0-9_]*)\s+by\s+(.+))", std::regex::icase);
+    const std::regex add_variable(R"(add\s+(.+?)\s+to\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase);
+    const std::regex function_call(R"(([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*;?)");
+
     for (const auto& source : lines) {
         const std::string line = trim(source.text);
         if (line.empty() || line == "}" || starts_with_ci(line, "//") || starts_with_ci(line, "note ")) continue;
-        if (starts_with_ci(line, "fnc ") && !std::regex_match(line, bad_fnc)) {
+
+        std::smatch match;
+        if (starts_with_ci(line, "fnc ") && !std::regex_match(line, match, fnc_header)) {
             std::cerr << "FRG-CHECK-004: Function definition must use fnc name(parameters) { at line " << source.number << ".\n";
             return 1;
         }
-        if (starts_with_ci(line, "attempt") && !std::regex_match(line, attempt)) {
+        if (starts_with_ci(line, "attempt") && !std::regex_match(line, attempt_header)) {
             std::cerr << "FRG-CHECK-005: attempt must be followed by '{' at line " << source.number << ".\n";
             return 1;
         }
-        if (starts_with_ci(line, "error") && !std::regex_match(line, catch_block)) {
+        if (starts_with_ci(line, "error") && !std::regex_match(line, catch_header)) {
             std::cerr << "FRG-CHECK-006: Catch block must be written as error() { at line " << source.number << ".\n";
             return 1;
         }
-        if (starts_with_ci(line, "show ") || starts_with_ci(line, "rem ") ||
-            starts_with_ci(line, "remember ") || starts_with_ci(line, "set ") ||
-            starts_with_ci(line, "ask ") || starts_with_ci(line, "create file ") ||
-            starts_with_ci(line, "add ") || starts_with_ci(line, "read file ") ||
-            starts_with_ci(line, "delete file ") || starts_with_ci(line, "del(") ||
-            starts_with_ci(line, "stop with error ") || starts_with_ci(line, "if ") ||
-            starts_with_ci(line, "otherwise") || starts_with_ci(line, "repeat ") || starts_with_ci(line, "while ") ||
-            starts_with_ci(line, "subtract ") || starts_with_ci(line, "multiply ") || starts_with_ci(line, "divide ") ||
-            starts_with_ci(line, "attempt") || starts_with_ci(line, "error") ||
-            starts_with_ci(line, "fnc ") || starts_with_ci(line, "return") ||
-            starts_with_ci(line, "draw ") || starts_with_ci(line, "load 3d ") ||
-            starts_with_ci(line, "add obj ")) continue;
-        if (std::regex_match(line, std::regex(R"([A-Za-z_][A-Za-z0-9_]*\s*\(.*\)\s*;?)"))) continue;
+
+        if (std::regex_match(line, match, declaration) || std::regex_match(line, match, assignment) ||
+            std::regex_match(line, match, output) || std::regex_match(line, match, stop_error)) {
+            if (!validate_expression(match[match.size() - 1].str(), source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, input)) {
+            if (!validate_expression(match[1].str(), source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, create_file) || std::regex_match(line, match, append_file)) {
+            if (!validate_expression(match[1].str(), source) ||
+                !validate_expression(match[2].str(), source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, read_file) || std::regex_match(line, match, delete_file) ||
+            std::regex_match(line, match, delete_call)) {
+            const std::string target = match[1].str();
+            if (!validate_expression(target, source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, if_header) || std::regex_match(line, match, while_header) ||
+            std::regex_match(line, match, repeat_header)) {
+            if (!validate_expression(match[1].str(), source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, add_variable)) {
+            if (!validate_expression(match[1].str(), source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, subtract)) {
+            if (!validate_expression(match[1].str(), source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, multiply) || std::regex_match(line, match, divide)) {
+            if (!validate_expression(match[2].str(), source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, fnc_header)) {
+            try {
+                const auto params = split_arguments(match[2].str());
+                for (const auto& param : params) {
+                    if (!std::regex_match(param, std::regex(R"([A-Za-z_][A-Za-z0-9_]*)"))) {
+                        std::cerr << "FRG-CHECK-009: Invalid function parameter at line " << source.number << ": " << param << "\n";
+                        return 1;
+                    }
+                }
+            } catch (const std::exception& error) {
+                std::cerr << "FRG-CHECK-009: Invalid function parameters at line " << source.number << ": " << error.what() << "\n";
+                return 1;
+            }
+            continue;
+        }
+        if (std::regex_match(line, match, attempt_header) || std::regex_match(line, match, catch_header) ||
+            starts_with_ci(line, "otherwise") || starts_with_ci(line, "draw ") ||
+            starts_with_ci(line, "load 3d ") || starts_with_ci(line, "add obj ")) continue;
+        if (starts_with_ci(line, "return")) {
+            const std::string expression = trim(line.substr(6));
+            if (!expression.empty() && !validate_expression(expression, source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, function_call)) {
+            try {
+                for (const auto& argument : split_arguments(match[2].str())) {
+                    if (!validate_expression(argument, source)) return 1;
+                }
+            } catch (const std::exception& error) {
+                std::cerr << "FRG-CHECK-010: Invalid function call at line " << source.number << ": " << error.what() << "\n";
+                return 1;
+            }
+            continue;
+        }
+
         std::cerr << "FRG-CHECK-007: Unknown statement at line " << source.number << ": " << line << "\n";
         return 1;
     }
 
-    std::cout << "FRIDGE check passed: " << lines.size() << " line(s), braces and supported statement forms are valid.\n";
+    std::cout << "FRIDGE check passed: " << lines.size()
+              << " line(s), block structure, supported statements and expression syntax are valid.\n";
     return 0;
 }
 
