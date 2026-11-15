@@ -814,7 +814,25 @@ std::vector<SourceLine> read_source(const fs::path& path) {
             source.text += " {";
         }
     }
-    return lines;
+
+    // Normalize the common compact otherwise branch into separate lines.
+    const std::regex inline_otherwise(R"(\}\s*otherwise\s*\{)", std::regex::icase);
+    std::vector<SourceLine> normalized;
+    for (const auto& source : lines) {
+        std::smatch branch;
+        if (std::regex_search(source.text, branch, inline_otherwise)) {
+            const size_t close_pos = static_cast<size_t>(branch.position());
+            const size_t after_close = close_pos + 1;
+            const size_t branch_end = close_pos + static_cast<size_t>(branch.length());
+            normalized.push_back({source.text.substr(0, after_close), source.number});
+            normalized.push_back({trim(source.text.substr(after_close, branch_end - after_close)), source.number});
+            const std::string trailing = trim(source.text.substr(branch_end));
+            if (!trailing.empty()) normalized.push_back({trailing, source.number});
+        } else {
+            normalized.push_back(source);
+        }
+    }
+    return normalized;
 }
 
 int check_source(const fs::path& path) {
