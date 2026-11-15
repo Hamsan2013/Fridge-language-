@@ -467,11 +467,19 @@ int run_update_command(const std::string& executable_path) {
     std::cout << "Downloading and installing the verified official release now...\n";
     const fs::path temp_dir = fs::temp_directory_path() / make_temp_name("fridge_update");
     std::error_code ec;
-    fs::create_directories(temp_dir, ec);
-    if (ec) {
-        std::cerr << "[FRG-UPD-002] Cannot create update staging directory: " << ec.message() << "\n";
+    if (!fs::create_directory(temp_dir, ec) || ec) {
+        std::cerr << "[FRG-UPD-002] Cannot create a private update staging directory: "
+                  << (ec ? ec.message() : "the temporary name already exists") << "\n";
         return 1;
     }
+#ifndef _WIN32
+    fs::permissions(temp_dir, fs::perms::owner_all, fs::perm_options::replace, ec);
+    if (ec) {
+        fs::remove_all(temp_dir, ec);
+        std::cerr << "[FRG-UPD-002] Cannot secure the update staging directory.\n";
+        return 1;
+    }
+#endif
     const fs::path asset = temp_dir / info.asset_name;
 
     std::cout << "Downloading official installer...\n";
