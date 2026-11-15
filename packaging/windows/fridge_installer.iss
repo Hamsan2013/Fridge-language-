@@ -13,7 +13,7 @@ SolidCompression=yes
 ChangesEnvironment=yes
 
 [Files]
-Source: "..\..\dist\bin\fridge.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "..\..\dist\bin\fridge.exe"; DestDir: "{app}\bin"; Flags: ignoreversion restartreplace
 Source: "..\..\resources\fridge.ico"; DestDir: "{app}\resources"; Flags: ignoreversion
 Source: "..\..\packaging\windows\register_frg_icon.bat"; DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "..\..\tests\golden\*"; DestDir: "{app}\examples"; Flags: recursesubdirs
