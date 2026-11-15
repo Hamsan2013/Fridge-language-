@@ -54,12 +54,12 @@ jobs:
           if (-not $exe) { throw "Release fridge.exe not found." }
           Copy-Item $exe.FullName "dist\bin\fridge.exe" -Force
           iscc "packaging\windows\fridge_installer.iss"
-          if (-not (Test-Path "dist\FRIDGE-Setup-v${ steps.version.outputs.VERSION }}.exe")) { throw "Windows installer output is missing." }
+          if (-not (Test-Path "dist\FRIDGE-Setup-v${{ steps.version.outputs.VERSION }}.exe")) { throw "Windows installer output is missing." }
       - uses: actions/upload-artifact@v4
         with:
           name: release-windows
           path: |
-            dist/FRIDGE-Setup-v${ steps.version.outputs.VERSION }}.exe
+            dist/FRIDGE-Setup-v${{ steps.version.outputs.VERSION }}.exe
             dist/fridge-lang-*.vsix
           if-no-files-found: error
 
@@ -83,7 +83,7 @@ jobs:
           ctest --test-dir build --output-on-failure
       - name: Build DEB package
         run: |
-          VER="${ steps.version.outputs.VERSION }}"
+          VER="${{ steps.version.outputs.VERSION }}"
           mkdir -p pkg/DEBIAN pkg/usr/local/bin
           install -m 755 build/fridge pkg/usr/local/bin/fridge
           ARCH="$(dpkg --print-architecture)"
@@ -92,7 +92,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux
-          path: FRIDGE-Linux-v${ steps.version.outputs.VERSION }}.deb
+          path: FRIDGE-Linux-v${{ steps.version.outputs.VERSION }}.deb
           if-no-files-found: error
 
   macos:
@@ -115,14 +115,14 @@ jobs:
           ctest --test-dir build -C Release --output-on-failure
       - name: Build PKG installer
         run: |
-          VER="${ steps.version.outputs.VERSION }}"
+          VER="${{ steps.version.outputs.VERSION }}"
           mkdir -p pkg-root/usr/local/bin
           install -m 755 build/fridge pkg-root/usr/local/bin/fridge
           pkgbuild --root pkg-root --identifier com.addevelopers.fridge --version "$VER" --install-location / "FRIDGE-macOS-v$VER.pkg"
       - uses: actions/upload-artifact@v4
         with:
           name: release-macos
-          path: FRIDGE-macOS-v${ steps.version.outputs.VERSION }}.pkg
+          path: FRIDGE-macOS-v${{ steps.version.outputs.VERSION }}.pkg
           if-no-files-found: error
 
   publish:
@@ -139,8 +139,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${ github.ref_name }}
-          name: FRIDGE ${ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          name: FRIDGE ${{ github.ref_name }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: release-assets/*
