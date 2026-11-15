@@ -15,6 +15,10 @@ repeat 3 times {
 show 2 + 3 * 4
 show "} otherwise {"
 if 1 is 1 { show "inline-branch-ok" } otherwise { show "inline-branch-failed" }
+rem brace as "{"
+if brace is "{"
+    show "brace-string-ok"
+end if
 while counter < 5 {
     add 1 to counter
 }
@@ -48,7 +52,7 @@ if(NOT run_result EQUAL 0)
     message(FATAL_ERROR "FRIDGE smoke run failed (${run_result}): ${run_error}\n${run_output}")
 endif()
 
-foreach(expected "Hello world" "14" "} otherwise {" "inline-branch-ok" "math-and-loop-ok" "Hi FRIDGE" "17")
+foreach(expected "Hello world" "14" "} otherwise {" "inline-branch-ok" "brace-string-ok" "math-and-loop-ok" "Hi FRIDGE" "17")
     string(FIND "${run_output}" "${expected}" found)
     if(found EQUAL -1)
         message(FATAL_ERROR "Expected output '${expected}' not found. Output:\n${run_output}")
