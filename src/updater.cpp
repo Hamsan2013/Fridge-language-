@@ -1,6 +1,8 @@
 #include "updater.hpp"
 
 #include <array>
+#include <chrono>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
