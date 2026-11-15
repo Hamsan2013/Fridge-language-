@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(FRIDGE VERSION 0.5.0 LANGUAGES CXX)
+project(FRIDGE VERSION 0.5.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,17 +12,32 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# The repository currently contains multiple incompatible generations of the
-# C++ library sources and public headers. The shipped CLI implementation in
-# src/main.cpp is self-contained, so build it directly instead of combining
-# those incompatible sources into fridge_core.
-set(FRIDGE_EXE_SOURCES src/main.cpp)
-if(WIN32)
-    list(APPEND FRIDGE_EXE_SOURCES resources/fridge.rc)
-endif()
+set(FRIDGE_SOURCES
+    src/main.cpp
+    src/updater.cpp
+)
 
-add_executable(fridge ${FRIDGE_EXE_SOURCES})
+add_executable(fridge ${FRIDGE_SOURCES})
+target_include_directories(fridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_definitions(fridge PRIVATE FRIDGE_VERSION="${PROJECT_VERSION}")
 set_target_properties(fridge PROPERTIES OUTPUT_NAME "fridge")
 
-install(TARGETS fridge DESTINATION bin)
+install(TARGETS fridge RUNTIME DESTINATION bin)
 install(DIRECTORY stdlib/ DESTINATION stdlib OPTIONAL)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(fridge_test ${FRIDGE_SOURCES})
+    target_include_directories(fridge_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(fridge_test PRIVATE
+        FRIDGE_VERSION="${PROJECT_VERSION}"
+        FRIDGE_TESTING=1
+    )
+    add_test(
+        NAME fridge_smoke
+        COMMAND ${CMAKE_COMMAND}
+            -DFRIDGE_TEST_EXECUTABLE=$<TARGET_FILE:fridge_test>
+            -DTEST_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/fridge-test-work
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_test.cmake
+    )
+endif()

@@ -1,326 +1,1222 @@
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <string>
-#include <vector>
-#include <unordered_map>
-#include <filesystem>
-#include <stdexcept>
 #include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <limits>
 #include <regex>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#include "updater.hpp"
 
 namespace fs = std::filesystem;
 
+#ifndef FRIDGE_VERSION
+#define FRIDGE_VERSION "0.5.2"
+#endif
+
+namespace {
+std::string trim(const std::string& value) {
+    const auto first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    const auto last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+std::string lower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+bool starts_with_ci(const std::string& value, const std::string& prefix) {
+    return value.size() >= prefix.size() &&
+        lower(value.substr(0, prefix.size())) == lower(prefix);
+}
+
+bool parse_number(const std::string& value, double& number) {
+    if (value.empty()) return false;
+    char* end = nullptr;
+    number = std::strtod(value.c_str(), &end);
+    return end != value.c_str() && end != nullptr && *end == '\0' && std::isfinite(number);
+}
+
+std::string number_string(double value) {
+    if (!std::isfinite(value)) throw std::runtime_error("A calculation produced a non-finite number.");
+    if (std::fabs(value) < 1e-12) value = 0;
+    std::ostringstream out;
+    out.precision(15);
+    out << value;
+    return out.str();
+}
+
+struct SourceLine {
+    std::string text;
+    size_t number = 0;
+};
+
 struct FunctionDef {
     std::string name;
-    std::vector<std::string> params;
-    std::vector<std::string> body;
+    std::vector<std::string> parameters;
+    std::vector<SourceLine> body;
 };
 
-class FridgeInterpreter {
-private:
-    std::unordered_map<std::string, std::string> variables;
-    std::unordered_map<std::string, FunctionDef> functions;
-
-    static std::string trim(const std::string& s) {
-        size_t first = s.find_first_not_of(" \t\r\n");
-        if (first == std::string::npos) return "";
-        size_t last = s.find_last_not_of(" \t\r\n");
-        return s.substr(first, (last - first + 1));
+std::vector<std::string> split_arguments(const std::string& text) {
+    std::vector<std::string> result;
+    std::string part;
+    int depth = 0;
+    bool in_string = false;
+    bool escaped = false;
+    for (char c : text) {
+        if (in_string) {
+            part += c;
+            if (escaped) escaped = false;
+            else if (c == '\\') escaped = true;
+            else if (c == '"') in_string = false;
+            continue;
+        }
+        if (c == '"') {
+            in_string = true;
+            part += c;
+        } else if (c == '(') {
+            ++depth;
+            part += c;
+        } else if (c == ')') {
+            --depth;
+            if (depth < 0) throw std::runtime_error("Unexpected ')' in argument list.");
+            part += c;
+        } else if (c == ',' && depth == 0) {
+            result.push_back(trim(part));
+            part.clear();
+        } else {
+            part += c;
+        }
     }
+    if (in_string || depth != 0) throw std::runtime_error("Unclosed string or parenthesis in argument list.");
+    if (!trim(part).empty() || !text.empty()) result.push_back(trim(part));
+    return result;
+}
 
-    std::string evalExpr(const std::string& rawExpr) {
-        std::string expr = trim(rawExpr);
-        if (expr.empty()) return "";
-
-        // Handle "joined with" string concatenation
-        size_t joinPos = expr.find(" joined with ");
-        if (joinPos != std::string::npos) {
-            return evalExpr(expr.substr(0, joinPos)) + evalExpr(expr.substr(joinPos + 13));
-        }
-
-        // String literal
-        if (expr.size() >= 2 && expr.front() == '"' && expr.back() == '"') {
-            return expr.substr(1, expr.size() - 2);
-        }
-
-        // Simple addition / subtraction
-        size_t plusPos = expr.find(" + ");
-        if (plusPos != std::string::npos) {
-            double a = std::stod(evalExpr(expr.substr(0, plusPos)));
-            double b = std::stod(evalExpr(expr.substr(plusPos + 3)));
-            double res = a + b;
-            return (res == (long long)res) ? std::to_string((long long)res) : std::to_string(res);
-        }
-        size_t minusPos = expr.find(" - ");
-        if (minusPos != std::string::npos) {
-            double a = std::stod(evalExpr(expr.substr(0, minusPos)));
-            double b = std::stod(evalExpr(expr.substr(minusPos + 3)));
-            double res = a - b;
-            return (res == (long long)res) ? std::to_string((long long)res) : std::to_string(res);
-        }
-
-        // Variable lookup
-        if (variables.count(expr)) {
-            return variables[expr];
-        }
-
-        return expr;
-    }
-
-    bool evalCondition(const std::string& rawCond) {
-        std::string cond = trim(rawCond);
-        size_t isPos = cond.find(" is ");
-        if (isPos != std::string::npos) {
-            std::string left = evalExpr(cond.substr(0, isPos));
-            std::string right = evalExpr(cond.substr(isPos + 4));
-            return left == right;
-        }
-        std::string val = evalExpr(cond);
-        return (val == "true" || val == "1");
-    }
-
-    std::vector<std::string> collectBlock(const std::vector<std::string>& lines, size_t& idx) {
-        std::vector<std::string> block;
-        int depth = 1;
-        idx++;
-        while (idx < lines.size() && depth > 0) {
-            std::string line = trim(lines[idx]);
-            for (char c : line) {
-                if (c == '{') depth++;
-                else if (c == '}') depth--;
-            }
-            if (depth > 0) {
-                block.push_back(lines[idx]);
-            }
-            idx++;
-        }
-        idx--; // Position on closing brace line
-        return block;
-    }
-
+class ExpressionParser {
 public:
-    void executeBlock(const std::vector<std::string>& lines) {
+    using Variables = std::unordered_map<std::string, std::string>;
+
+    ExpressionParser(const std::string& input, const Variables& variables, bool syntax_only = false)
+        : variables_(variables), syntax_only_(syntax_only) {
+        tokenize(input);
+    }
+
+    std::string parse() {
+        if (tokens_.empty()) return {};
+        std::string result = parse_or();
+        if (position_ != tokens_.size()) {
+            throw std::runtime_error("Unexpected token in expression: " + tokens_[position_].value);
+        }
+        return result;
+    }
+
+private:
+    struct Token {
+        enum class Kind { Word, Number, String, Symbol } kind;
+        std::string value;
+    };
+
+    const Variables& variables_;
+    bool syntax_only_ = false;
+    std::vector<Token> tokens_;
+    size_t position_ = 0;
+
+    void tokenize(const std::string& input) {
+        size_t i = 0;
+        while (i < input.size()) {
+            const unsigned char c = static_cast<unsigned char>(input[i]);
+            if (std::isspace(c)) { ++i; continue; }
+            if (input[i] == '"') {
+                ++i;
+                std::string value;
+                bool closed = false;
+                while (i < input.size()) {
+                    char ch = input[i++];
+                    if (ch == '"') { closed = true; break; }
+                    if (ch == '\\') {
+                        if (i >= input.size()) throw std::runtime_error("String ends with an escape character.");
+                        const char escaped = input[i++];
+                        switch (escaped) {
+                            case 'n': value += '\n'; break;
+                            case 'r': value += '\r'; break;
+                            case 't': value += '\t'; break;
+                            case '\\': value += '\\'; break;
+                            case '"': value += '"'; break;
+                            default: throw std::runtime_error(std::string("Unsupported string escape: \\") + escaped);
+                        }
+                    } else value += ch;
+                }
+                if (!closed) throw std::runtime_error("Unclosed string literal.");
+                tokens_.push_back({Token::Kind::String, value});
+            } else if (std::isdigit(c) || (input[i] == '.' && i + 1 < input.size() &&
+                                                  std::isdigit(static_cast<unsigned char>(input[i + 1])))) {
+                const size_t start = i++;
+                while (i < input.size() && (std::isdigit(static_cast<unsigned char>(input[i])) || input[i] == '.')) ++i;
+                const std::string value = input.substr(start, i - start);
+                double parsed = 0;
+                if (!parse_number(value, parsed)) throw std::runtime_error("Invalid numeric literal: " + value);
+                tokens_.push_back({Token::Kind::Number, value});
+            } else if (std::isalpha(c) || input[i] == '_') {
+                const size_t start = i++;
+                while (i < input.size() && (std::isalnum(static_cast<unsigned char>(input[i])) || input[i] == '_')) ++i;
+                tokens_.push_back({Token::Kind::Word, input.substr(start, i - start)});
+             } else if (std::string("+-*/%()><=!&|").find(input[i]) != std::string::npos) {
+                std::string op(1, input[i++]);
+                if ((op == ">" || op == "<" || op == "=" || op == "!" || op == "&" || op == "|") &&
+                    i < input.size() && input[i] == (op == "&" ? '&' : op == "|" ? '|' : '=')) {
+                    op += input[i++];
+                } else if (op == "=" || op == "!" || op == "&" || op == "|") {
+                    throw std::runtime_error("Expected a second character after operator '" + op + "'.");
+                }
+                tokens_.push_back({Token::Kind::Symbol, op});
+            } else {
+                throw std::runtime_error(std::string("Invalid character in expression: ") + input[i]);
+            }
+        }
+    }
+
+    bool has(size_t offset = 0) const { return position_ + offset < tokens_.size(); }
+    const Token& current() const {
+        static const Token empty{Token::Kind::Symbol, ""};
+        return has() ? tokens_[position_] : empty;
+    }
+    bool symbol(const std::string& value) const {
+        return has() && current().kind == Token::Kind::Symbol && current().value == value;
+    }
+    bool word(const std::string& value, size_t offset = 0) const {
+        return has(offset) && tokens_[position_ + offset].kind == Token::Kind::Word &&
+            lower(tokens_[position_ + offset].value) == value;
+    }
+    bool phrase(const std::string& first, const std::string& second) const {
+        return word(first) && word(second, 1);
+    }
+    void take_phrase() { position_ += 2; }
+
+    static bool numeric_binary(const std::string& a, const std::string& b, char op, std::string& output) {
+        double left = 0, right = 0;
+        if (!parse_number(a, left) || !parse_number(b, right)) return false;
+        switch (op) {
+            case '+': output = number_string(left + right); break;
+            case '-': output = number_string(left - right); break;
+            case '*': output = number_string(left * right); break;
+            case '/':
+                if (right == 0) throw std::runtime_error("Division by zero.");
+                output = number_string(left / right); break;
+            case '%':
+                if (right == 0) throw std::runtime_error("Modulo by zero.");
+                output = number_string(std::fmod(left, right)); break;
+            default: return false;
+        }
+        return true;
+    }
+
+    std::string parse_or() {
+        std::string left = parse_and();
+        while (word("or") || symbol("||")) {
+            ++position_;
+            const std::string right = parse_and();
+            const bool a = truthy(left), b = truthy(right);
+            left = (a || b) ? "true" : "false";
+        }
+        return left;
+    }
+
+    std::string parse_and() {
+        std::string left = parse_comparison();
+        while (word("and") || symbol("&&")) {
+            ++position_;
+            const std::string right = parse_comparison();
+            const bool a = truthy(left), b = truthy(right);
+            left = (a && b) ? "true" : "false";
+        }
+        return left;
+    }
+
+    std::string parse_comparison() {
+        std::string left = parse_join();
+        std::string op;
+        if (symbol("==") || symbol("!=") || symbol(">") || symbol("<") || symbol(">=") || symbol("<=")) {
+            op = current().value;
+            ++position_;
+        } else if (word("is")) {
+            ++position_;
+            if (word("not")) { ++position_; op = "!="; }
+            else if (word("greater") && word("than", 1)) { take_phrase(); op = ">"; }
+            else if (word("less") && word("than", 1)) { take_phrase(); op = "<"; }
+            else if (word("at") && (word("least", 1) || word("most", 1))) {
+                const bool least = word("least", 1);
+                take_phrase();
+                op = least ? ">=" : "<=";
+            } else op = "==";
+        } else if (phrase("greater", "than")) { take_phrase(); op = ">"; }
+        else if (phrase("less", "than")) { take_phrase(); op = "<"; }
+        else if (phrase("at", "least")) { take_phrase(); op = ">="; }
+        else if (phrase("at", "most")) { take_phrase(); op = "<="; }
+        if (op.empty()) return left;
+
+        const std::string right = parse_join();
+        double a = 0, b = 0;
+        const bool numeric = parse_number(left, a) && parse_number(right, b);
+        bool result = false;
+        if (op == "==") result = left == right;
+        else if (op == "!=") result = left != right;
+        else if (numeric && op == ">") result = a > b;
+        else if (numeric && op == "<") result = a < b;
+        else if (numeric && op == ">=") result = a >= b;
+        else if (numeric && op == "<=") result = a <= b;
+        else if (!numeric && op != "==" && op != "!=" && !syntax_only_)
+            throw std::runtime_error("Numeric comparison requires two numeric values.");
+        return result ? "true" : "false";
+    }
+
+    std::string parse_join() {
+        std::string value = parse_add();
+        while (phrase("joined", "with")) {
+            take_phrase();
+            value += parse_add();
+        }
+        return value;
+    }
+
+    std::string parse_add() {
+        std::string left = parse_multiply();
+        while (symbol("+") || symbol("-") || word("plus") || word("minus")) {
+            char op = (symbol("-") || word("minus")) ? '-' : '+';
+            ++position_;
+            const std::string right = parse_multiply();
+            std::string result;
+            if (!numeric_binary(left, right, op, result)) {
+                if (op == '+') left += right;
+                else throw std::runtime_error("Subtraction requires numeric values.");
+            } else left = result;
+        }
+        return left;
+    }
+
+    std::string parse_multiply() {
+        std::string left = parse_unary();
+        while (symbol("*") || symbol("/") || symbol("%") ||
+               phrase("multiplied", "by") || phrase("divided", "by") || word("modulo")) {
+            char op = '*';
+            if (symbol("/")) op = '/';
+            else if (symbol("%") || word("modulo")) op = '%';
+            else if (phrase("divided", "by")) op = '/';
+            if (phrase("multiplied", "by") || phrase("divided", "by")) take_phrase();
+            else ++position_;
+            const std::string right = parse_unary();
+            std::string result;
+            if (!numeric_binary(left, right, op, result))
+                throw std::runtime_error("Multiplication, division, and modulo require numeric values.");
+            left = result;
+        }
+        return left;
+    }
+
+    std::string parse_unary() {
+        if (symbol("-")) { ++position_; double v = 0; const auto s = parse_unary(); if (!parse_number(s, v)) throw std::runtime_error("Unary minus requires a number."); return number_string(-v); }
+        if (symbol("+")) { ++position_; double v = 0; const auto s = parse_unary(); if (!parse_number(s, v)) throw std::runtime_error("Unary plus requires a number."); return number_string(v); }
+        if (word("not") || symbol("!")) { ++position_; return truthy(parse_unary()) ? "false" : "true"; }
+        return parse_primary();
+    }
+
+    std::string parse_primary() {
+        if (!has()) throw std::runtime_error("Expression is missing a value.");
+        if (symbol("(")) {
+            ++position_;
+            std::string value = parse_or();
+            if (!symbol(")")) throw std::runtime_error("Missing ')' in expression.");
+            ++position_;
+            return value;
+        }
+        const Token token = current();
+        ++position_;
+        if (token.kind == Token::Kind::String || token.kind == Token::Kind::Number) return token.value;
+        if (token.kind == Token::Kind::Word) {
+            const std::string key = lower(token.value);
+            if (key == "true" || key == "false") return key;
+            const auto found = variables_.find(key);
+            return found == variables_.end() ? token.value : found->second;
+        }
+        throw std::runtime_error("Unexpected symbol in expression: " + token.value);
+    }
+
+    static bool truthy(const std::string& value) {
+        const std::string normalized = lower(trim(value));
+        if (normalized.empty() || normalized == "false" || normalized == "0" || normalized == "nothing") return false;
+        return true;
+    }
+};
+
+bool is_truthy(const std::string& value) {
+    const std::string normalized = lower(trim(value));
+    return !(normalized.empty() || normalized == "false" || normalized == "0" || normalized == "nothing");
+}
+
+bool scan_braces(const std::string& line, int& depth, bool& in_string, bool& escaped) {
+    for (size_t i = 0; i < line.size(); ++i) {
+        const char c = line[i];
+        if (in_string) {
+            if (escaped) escaped = false;
+            else if (c == '\\') escaped = true;
+            else if (c == '"') in_string = false;
+            continue;
+        }
+        if (c == '"') in_string = true;
+        else if (c == '/' && i + 1 < line.size() && line[i + 1] == '/') break;
+        else if (c == '{') ++depth;
+        else if (c == '}') {
+            --depth;
+            if (depth < 0) return false;
+        }
+    }
+    return true;
+}
+
+class Interpreter {
+public:
+    using Variables = ExpressionParser::Variables;
+
+    void execute(const std::vector<SourceLine>& lines) {
+        execute_block(lines, 0);
+    }
+
+private:
+    Variables variables_;
+    std::unordered_map<std::string, FunctionDef> functions_;
+    size_t instructions_ = 0;
+    bool returned_ = false;
+    std::string return_value_;
+    size_t recursion_depth_ = 0;
+
+    std::string eval(const std::string& expression) const {
+        return ExpressionParser(expression, variables_).parse();
+    }
+
+    fs::path safe_path(const std::string& raw, bool create_parent) const {
+        if (raw.empty() || raw.size() > 4096) throw std::runtime_error("File path is empty or exceeds the 4096-byte safety limit.");
+        const fs::path requested = fs::u8path(raw);
+        if (requested.empty() || requested.is_absolute() || requested.has_root_name())
+            throw std::runtime_error("File paths must be relative to the current project directory.");
+
+        for (const auto& part : requested) {
+            if (part == ".." || part == ".") {
+                if (part == "..") throw std::runtime_error("File paths cannot escape the current project directory.");
+            }
+        }
+
+        std::error_code ec;
+        const fs::path root = fs::weakly_canonical(fs::current_path(), ec);
+        if (ec) throw std::runtime_error("Cannot resolve project directory: " + ec.message());
+        fs::path candidate = (root / requested).lexically_normal();
+
+        auto within_root = [&root](const fs::path& path) {
+            auto r = root.begin();
+            auto p = path.begin();
+            for (; r != root.end(); ++r, ++p) {
+                if (p == path.end() || *r != *p) return false;
+            }
+            return true;
+        };
+
+        fs::path walk = root;
+        for (const auto& part : requested) {
+            if (part == "." || part.empty()) continue;
+            walk /= part;
+            const auto status = fs::symlink_status(walk, ec);
+            if (!ec && fs::is_symlink(status))
+                throw std::runtime_error("File operations through symbolic links are blocked for safety.");
+            ec.clear();
+        }
+
+        if (create_parent && candidate.has_parent_path()) {
+            fs::create_directories(candidate.parent_path(), ec);
+            if (ec) throw std::runtime_error("Cannot create parent directory: " + ec.message());
+            walk = fs::weakly_canonical(candidate.parent_path(), ec);
+            if (ec || !within_root(walk))
+                throw std::runtime_error("File path resolves outside the current project directory.");
+        }
+
+        if (fs::exists(candidate, ec)) {
+            const fs::path resolved = fs::weakly_canonical(candidate, ec);
+            if (ec || !within_root(resolved))
+                throw std::runtime_error("File path resolves outside the current project directory.");
+            candidate = resolved;
+        }
+        if (!within_root(candidate))
+            throw std::runtime_error("File path resolves outside the current project directory.");
+        return candidate;
+    }
+
+    std::vector<SourceLine> collect_block(const std::vector<SourceLine>& lines, size_t& index) const {
+        const std::string header = lines[index].text;
+        bool in_string = false, escaped = false;
+        size_t opening = std::string::npos;
+        for (size_t i = 0; i < header.size(); ++i) {
+            const char c = header[i];
+            if (in_string) {
+                if (escaped) escaped = false;
+                else if (c == '\\') escaped = true;
+                else if (c == '"') in_string = false;
+            } else if (c == '"') in_string = true;
+            else if (c == '/' && i + 1 < header.size() && header[i + 1] == '/') break;
+            else if (c == '{') { opening = i; break; }
+        }
+        if (opening == std::string::npos)
+            throw std::runtime_error("Expected '{' to open block at line " + std::to_string(lines[index].number));
+
+        int depth = 1;
+        std::vector<SourceLine> body;
+        auto scan_from = [&](const std::string& text, size_t start) -> size_t {
+            bool string = false, escape = false;
+            for (size_t i = start; i < text.size(); ++i) {
+                const char c = text[i];
+                if (string) {
+                    if (escape) escape = false;
+                    else if (c == '\\') escape = true;
+                    else if (c == '"') string = false;
+                } else if (c == '"') string = true;
+                else if (c == '/' && i + 1 < text.size() && text[i + 1] == '/') break;
+                else if (c == '{') ++depth;
+                else if (c == '}') {
+                    --depth;
+                    if (depth == 0) return i;
+                    if (depth < 0) throw std::runtime_error("Unexpected '}' at line " + std::to_string(lines[index].number));
+                }
+            }
+            return std::string::npos;
+        };
+
+        std::string tail = header.substr(opening + 1);
+        size_t close = scan_from(tail, 0);
+        if (close != std::string::npos) {
+            const std::string inline_body = trim(tail.substr(0, close));
+            if (!inline_body.empty()) body.push_back({inline_body, lines[index].number});
+            if (!trim(tail.substr(close + 1)).empty())
+                throw std::runtime_error("Put code after a closing block brace on a new line (line " +
+                                         std::to_string(lines[index].number) + ").");
+            return body;
+        }
+
+        for (size_t line = index + 1; line < lines.size(); ++line) {
+            close = scan_from(lines[line].text, 0);
+            if (close != std::string::npos) {
+                if (!trim(lines[line].text.substr(0, close)).empty())
+                    body.push_back({trim(lines[line].text.substr(0, close)), lines[line].number});
+                if (!trim(lines[line].text.substr(close + 1)).empty())
+                    throw std::runtime_error("Put code after a closing block brace on a new line (line " +
+                                             std::to_string(lines[line].number) + ").");
+                index = line;
+                return body;
+            }
+            body.push_back(lines[line]);
+        }
+        throw std::runtime_error("Unclosed block beginning at line " + std::to_string(lines[index].number));
+    }
+
+    void execute_block(const std::vector<SourceLine>& lines, size_t depth) {
+        if (depth > 64) throw std::runtime_error("Maximum function/block nesting depth exceeded.");
         for (size_t i = 0; i < lines.size(); ++i) {
-            std::string line = trim(lines[i]);
-            if (line.empty() || line.rfind("//", 0) == 0 || line.rfind("note ", 0) == 0 || line == "}") {
-                continue;
-            }
+            if (returned_) return;
+            if (++instructions_ > 1000000)
+                throw std::runtime_error("Execution stopped: the 1,000,000-instruction safety limit was reached.");
 
+            const std::string line = trim(lines[i].text);
+            if (line.empty() || line == "}" || starts_with_ci(line, "//") || starts_with_ci(line, "note ")) continue;
             std::smatch match;
+            const auto& source = lines[i];
 
-            // 1. Variable declaration: rem <var> as <expr> OR remember <var> as <expr>
-            if (std::regex_match(line, match, std::regex(R"((?:rem|remember)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+as\s+(.+))", std::regex::icase))) {
-                variables[match[1].str()] = evalExpr(match[2].str());
-                continue;
-            }
-
-            // 2. Variable mutation: set <var> to <expr>
-            if (std::regex_match(line, match, std::regex(R"(set\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+to\s+(.+))", std::regex::icase))) {
-                variables[match[1].str()] = evalExpr(match[2].str());
-                continue;
-            }
-
-            // 3. Console Output: show <expr>
-            if (std::regex_match(line, match, std::regex(R"(show\s+(.+))", std::regex::icase))) {
-                std::cout << evalExpr(match[1].str()) << std::endl;
-                continue;
-            }
-
-            // 4. Interactive Input: ask <prompt> as <var>
-            if (std::regex_match(line, match, std::regex(R"(ask\s+(.+)\s+as\s+([a-zA-Z_][a-zA-Z0-9_]*))", std::regex::icase))) {
-                std::cout << evalExpr(match[1].str()) << " ";
-                std::string input;
-                std::getline(std::cin, input);
-                variables[match[2].str()] = input;
-                continue;
-            }
-
-            // 5. Stop with custom error: stop with error <expr>
-            if (std::regex_match(line, match, std::regex(R"(stop\s+with\s+error\s+(.+))", std::regex::icase))) {
-                throw std::runtime_error(evalExpr(match[1].str()));
-            }
-
-            // 6. File System: Create / Overwrite File
-            if (std::regex_match(line, match, std::regex(R"(create\s+file\s+(\".*?\"|\S+)\s+with\s+(.+))", std::regex::icase))) {
-                std::string pathStr = evalExpr(match[1].str());
-                std::string content = evalExpr(match[2].str());
-                fs::path p(pathStr);
-                if (p.has_parent_path()) fs::create_directories(p.parent_path());
-                std::ofstream out(p, std::ios::trunc);
-                if (!out) throw std::runtime_error("Cannot create file: " + pathStr);
-                out << content << "\n";
-                continue;
-            }
-
-            // 7. File System: Append to File
-            if (std::regex_match(line, match, std::regex(R"(add\s+(.+)\s+to\s+file\s+(\".*?\"|\S+))", std::regex::icase))) {
-                std::string content = evalExpr(match[1].str());
-                std::string pathStr = evalExpr(match[2].str());
-                std::ofstream out(pathStr, std::ios::app);
-                if (!out) throw std::runtime_error("Cannot append to file: " + pathStr);
-                out << content << "\n";
-                continue;
-            }
-
-            // 8. File System: Read File
-            if (std::regex_match(line, match, std::regex(R"(read\s+file\s+(\".*?\"|\S+)\s+into\s+([a-zA-Z_][a-zA-Z0-9_]*))", std::regex::icase))) {
-                std::string pathStr = evalExpr(match[1].str());
-                std::ifstream in(pathStr);
-                if (!in) throw std::runtime_error("File does not exist: " + pathStr);
-                std::stringstream buffer;
-                buffer << in.rdbuf();
-                variables[match[2].str()] = trim(buffer.str());
-                continue;
-            }
-
-            // 9. File System: Delete File via del("path") or delete file "path"
-            if (std::regex_match(line, match, std::regex(R"((?:del\s*\(\s*(.+?)\s*\)|delete\s+file\s+(.+)))", std::regex::icase))) {
-                std::string rawTarget = match[1].matched ? match[1].str() : match[2].str();
-                std::string pathStr = evalExpr(rawTarget);
-                if (!fs::exists(pathStr)) {
-                    throw std::runtime_error("Cannot delete missing file: " + pathStr);
+            try {
+                if (std::regex_match(line, match, std::regex(R"((?:rem|remember)\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(.+))", std::regex::icase))) {
+                    variables_[lower(match[1].str())] = eval(match[2].str()); continue;
                 }
-                fs::remove(pathStr);
-                continue;
-            }
-
-            // 10. 3D Asset Loading: load 3d model from "assets/..." as <id>
-            if (std::regex_match(line, match, std::regex(R"(load\s+3d\s+model\s+from\s+(\".*?\"|\S+)\s+as\s+([a-zA-Z_][a-zA-Z0-9_]*))", std::regex::icase))) {
-                std::string modelPath = evalExpr(match[1].str());
-                std::string nodeName = match[2].str();
-                std::cout << "[FRIDGE 3D Asset] Loaded model '" << modelPath << "' as '" << nodeName << "'." << std::endl;
-                continue;
-            }
-
-            // 11. 3D Scene Node: add OBJ <name>
-            if (std::regex_match(line, match, std::regex(R"(add\s+OBJ\s+([a-zA-Z0-9_]+))", std::regex::icase))) {
-                std::cout << "[FRIDGE 3D Engine] Instantiated 3D scene node: '" << match[1].str() << "'." << std::endl;
-                continue;
-            }
-
-            // 12. 2D Engine Commands
-            if (std::regex_match(line, match, std::regex(R"((draw\s+rectangle|draw\s+circle|add\s+SPRITE|create\s+2d\s+canvas)\b.*)", std::regex::icase))) {
-                std::cout << "[FRIDGE 2D Engine] " << line << std::endl;
-                continue;
-            }
-
-            // 13. Function Definition: fnc name(params) { ... }
-            if (std::regex_match(line, match, std::regex(R"(fnc\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)\s*\{)", std::regex::icase))) {
-                FunctionDef fn;
-                fn.name = match[1].str();
-                std::stringstream ss(match[2].str());
-                std::string param;
-                while (std::getline(ss, param, ',')) {
-                    std::string p = trim(param);
-                    if (!p.empty()) fn.params.push_back(p);
+                if (std::regex_match(line, match, std::regex(R"(set\s+([A-Za-z_][A-Za-z0-9_]*)\s+to\s+(.+))", std::regex::icase))) {
+                    variables_[lower(match[1].str())] = eval(match[2].str()); continue;
                 }
-                fn.body = collectBlock(lines, i);
-                functions[fn.name] = fn;
-                continue;
-            }
-
-            // 14. Safe Error Handling: attempt { ... } error() { ... }
-            if (std::regex_match(line, match, std::regex(R"(attempt\s*\{)", std::regex::icase))) {
-                std::vector<std::string> tryBlock = collectBlock(lines, i);
-                std::vector<std::string> catchBlock;
-
-                std::string closingLine = trim(lines[i]);
-                if (std::regex_search(closingLine, std::regex(R"(\}\s*error\s*\(\s*\)\s*\{)", std::regex::icase))) {
-                    catchBlock = collectBlock(lines, i);
-                } else if (i + 1 < lines.size() && std::regex_match(trim(lines[i + 1]), std::regex(R"(error\s*\(\s*\)\s*\{)", std::regex::icase))) {
-                    i++;
-                    catchBlock = collectBlock(lines, i);
+                if (std::regex_match(line, match, std::regex(R"(show\s+(.+))", std::regex::icase))) {
+                    std::cout << eval(match[1].str()) << '\n'; continue;
                 }
-
-                try {
-                    executeBlock(tryBlock);
-                } catch (const std::exception& e) {
-                    variables["last_error"] = e.what();
-                    executeBlock(catchBlock);
+                if (std::regex_match(line, match, std::regex(R"(ask\s+(.+)\s+as\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase))) {
+                    std::cout << eval(match[1].str()) << ' ' << std::flush;
+                    std::string value;
+                    if (!std::getline(std::cin, value)) throw std::runtime_error("Input stream closed while waiting for ask.");
+                    variables_[lower(match[2].str())] = value; continue;
                 }
-                continue;
-            }
+                if (std::regex_match(line, match, std::regex(R"(stop\s+with\s+error\s+(.+))", std::regex::icase)))
+                    throw std::runtime_error(eval(match[1].str()));
 
-            // 15. Repeat Loop: repeat N times { ... }
-            if (std::regex_match(line, match, std::regex(R"(repeat\s+(.+)\s+times\s*\{)", std::regex::icase))) {
-                int count = std::stoi(evalExpr(match[1].str()));
-                std::vector<std::string> loopBody = collectBlock(lines, i);
-                for (int c = 0; c < count; ++c) {
-                    executeBlock(loopBody);
-                }
-                continue;
-            }
-
-            // 16. Conditionals: if <cond> { ... } otherwise { ... }
-            if (std::regex_match(line, match, std::regex(R"(if\s+(.+?)\s*\{)", std::regex::icase))) {
-                bool cond = evalCondition(match[1].str());
-                std::vector<std::string> ifBody = collectBlock(lines, i);
-                std::vector<std::string> elseBody;
-
-                std::string closeLine = trim(lines[i]);
-                if (std::regex_search(closeLine, std::regex(R"(\}\s*otherwise\s*\{)", std::regex::icase))) {
-                    elseBody = collectBlock(lines, i);
-                } else if (i + 1 < lines.size() && std::regex_match(trim(lines[i + 1]), std::regex(R"(otherwise\s*\{)", std::regex::icase))) {
-                    i++;
-                    elseBody = collectBlock(lines, i);
-                }
-
-                if (cond) executeBlock(ifBody);
-                else if (!elseBody.empty()) executeBlock(elseBody);
-                continue;
-            }
-
-            // 17. Function Call: name(arg1, arg2)
-            if (std::regex_match(line, match, std::regex(R"(([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\))"))) {
-                std::string fnName = match[1].str();
-                if (functions.count(fnName)) {
-                    const auto& fn = functions[fnName];
-                    std::vector<std::string> args;
-                    std::stringstream ss(match[2].str());
-                    std::string arg;
-                    while (std::getline(ss, arg, ',')) {
-                        args.push_back(evalExpr(arg));
-                    }
-                    for (size_t p = 0; p < fn.params.size() && p < args.size(); ++p) {
-                        variables[fn.params[p]] = args[p];
-                    }
-                    executeBlock(fn.body);
+                if (std::regex_match(line, match, std::regex(R"(create\s+file\s+(.+?)\s+with\s+(.+))", std::regex::icase))) {
+                    const std::string path = eval(match[1].str());
+                    const std::string content = eval(match[2].str());
+                    const fs::path target = safe_path(path, true);
+                    std::ofstream out(target, std::ios::binary | std::ios::trunc);
+                    if (!out) throw std::runtime_error("Cannot create file: " + path);
+                    out << content;
+                    out.flush();
+                    if (!out) throw std::runtime_error("Writing file failed: " + path);
+                    out.close();
+                    if (out.fail()) throw std::runtime_error("Closing file failed: " + path);
                     continue;
                 }
+                if (std::regex_match(line, match, std::regex(R"(add\s+(.+?)\s+to\s+file\s+(.+))", std::regex::icase))) {
+                    const std::string content = eval(match[1].str());
+                    const std::string path = eval(match[2].str());
+                    const fs::path target = safe_path(path, true);
+                    std::ofstream out(target, std::ios::binary | std::ios::app);
+                    if (!out) throw std::runtime_error("Cannot append to file: " + path);
+                    out << content;
+                    out.flush();
+                    if (!out) throw std::runtime_error("Appending to file failed: " + path);
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"(read\s+file\s+(.+?)\s+into\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase))) {
+                    const std::string path = eval(match[1].str());
+                    const fs::path target = safe_path(path, false);
+                    std::error_code size_error;
+                    const auto input_size = fs::file_size(target, size_error);
+                    if (size_error || input_size > 64ULL * 1024ULL * 1024ULL)
+                        throw std::runtime_error("Cannot read file or file exceeds the 64 MiB safety limit: " + path);
+                    std::ifstream in(target, std::ios::binary);
+                    if (!in) throw std::runtime_error("Cannot read file: " + path);
+                    std::ostringstream data;
+                    data << in.rdbuf();
+                    if (!in.good() && !in.eof()) throw std::runtime_error("Reading file failed: " + path);
+                    variables_[lower(match[2].str())] = data.str();
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"((?:del\s*\(\s*(.+?)\s*\)|delete\s+file\s+(.+)))", std::regex::icase))) {
+                    const std::string raw = match[1].matched ? match[1].str() : match[2].str();
+                    const std::string path = eval(raw);
+                    const fs::path target = safe_path(path, false);
+                    std::error_code ec;
+                    if (!fs::is_regular_file(target, ec) || ec)
+                        throw std::runtime_error("Cannot delete missing or non-regular file: " + path);
+                    if (!fs::remove(target, ec) || ec)
+                        throw std::runtime_error("Cannot delete file: " + path + (ec ? " (" + ec.message() + ")" : ""));
+                    continue;
+                }
+
+                auto mutate_number = [&](const std::string& variable_name, const std::string& operand_expression, char operation) {
+                    const std::string variable = lower(variable_name);
+                    const auto existing = variables_.find(variable);
+                    if (existing == variables_.end())
+                        throw std::runtime_error("Math operation requires an existing variable: " + variable_name);
+                    double left = 0, right = 0;
+                    const std::string operand = eval(operand_expression);
+                    if (!parse_number(existing->second, left) || !parse_number(operand, right))
+                        throw std::runtime_error("Natural math operations require numeric values.");
+                    if (operation == '/' && right == 0)
+                        throw std::runtime_error("Division by zero.");
+                    double result = 0;
+                    switch (operation) {
+                        case '+': result = left + right; break;
+                        case '-': result = left - right; break;
+                        case '*': result = left * right; break;
+                        case '/': result = left / right; break;
+                        default: throw std::runtime_error("Invalid numeric mutation operation.");
+                    }
+                    variables_[variable] = number_string(result);
+                };
+                if (std::regex_match(line, match, std::regex(R"(add\s+(.+?)\s+to\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase))) {
+                    mutate_number(match[2].str(), match[1].str(), '+');
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"(subtract\s+(.+?)\s+from\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase))) {
+                    mutate_number(match[2].str(), match[1].str(), '-');
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"(multiply\s+([A-Za-z_][A-Za-z0-9_]*)\s+by\s+(.+))", std::regex::icase))) {
+                    mutate_number(match[1].str(), match[2].str(), '*');
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"(divide\s+([A-Za-z_][A-Za-z0-9_]*)\s+by\s+(.+))", std::regex::icase))) {
+                    mutate_number(match[1].str(), match[2].str(), '/');
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"(while\s+(.+?)\s*\{)", std::regex::icase))) {
+                    const std::string condition = match[1].str();
+                    const auto body = collect_block(lines, i);
+                    size_t iterations = 0;
+                    while (is_truthy(eval(condition))) {
+                        if (++iterations > 100000)
+                            throw std::runtime_error("while loop exceeded the 100000-iteration safety limit.");
+                        execute_block(body, depth + 1);
+                        if (returned_) break;
+                    }
+                    continue;
+                }
+
+                if (std::regex_match(line, match, std::regex(R"(fnc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*?)\)\s*\{)", std::regex::icase))) {
+                    FunctionDef fn;
+                    fn.name = lower(match[1].str());
+                    fn.parameters = split_arguments(match[2].str());
+                    for (const auto& param : fn.parameters) {
+                        if (!std::regex_match(param, std::regex(R"([A-Za-z_][A-Za-z0-9_]*)")))
+                            throw std::runtime_error("Invalid function parameter name: " + param);
+                    }
+                    fn.body = collect_block(lines, i);
+                    if (functions_.count(fn.name)) throw std::runtime_error("Function already defined: " + fn.name);
+                    functions_[fn.name] = std::move(fn);
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"(repeat\s+(.+?)\s+times\s*\{)", std::regex::icase))) {
+                    const std::string count_text = eval(match[1].str());
+                    double raw_count = 0;
+                    if (!parse_number(count_text, raw_count) || raw_count < 0 || raw_count > 100000 ||
+                        std::floor(raw_count) != raw_count)
+                        throw std::runtime_error("repeat count must be a whole number between 0 and 100000.");
+                    const auto body = collect_block(lines, i);
+                    for (size_t count = 0; count < static_cast<size_t>(raw_count); ++count) {
+                        execute_block(body, depth + 1);
+                        if (returned_) break;
+                    }
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"(if\s+(.+?)\s*\{)", std::regex::icase))) {
+                    const bool condition = is_truthy(eval(match[1].str()));
+                    const auto if_body = collect_block(lines, i);
+                    std::vector<SourceLine> else_body;
+                    size_t next = i + 1;
+                    while (next < lines.size() && trim(lines[next].text).empty()) ++next;
+                    if (next < lines.size() && std::regex_match(trim(lines[next].text), std::regex(R"(otherwise\s*\{)", std::regex::icase))) {
+                        i = next;
+                        else_body = collect_block(lines, i);
+                    }
+                    execute_block(condition ? if_body : else_body, depth + 1);
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"(attempt\s*\{)", std::regex::icase))) {
+                    const auto try_body = collect_block(lines, i);
+                    std::vector<SourceLine> catch_body;
+                    size_t next = i + 1;
+                    while (next < lines.size() && trim(lines[next].text).empty()) ++next;
+                    if (next < lines.size() && std::regex_match(trim(lines[next].text), std::regex(R"(error\s*\(\s*\)\s*\{)", std::regex::icase))) {
+                        i = next;
+                        catch_body = collect_block(lines, i);
+                    }
+                    try {
+                        execute_block(try_body, depth + 1);
+                    } catch (const std::exception& error) {
+                        variables_["last_error"] = error.what();
+                        execute_block(catch_body, depth + 1);
+                    }
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"(return(?:\s+(.+))?)", std::regex::icase))) {
+                    if (recursion_depth_ == 0) throw std::runtime_error("return can only be used inside a function.");
+                    return_value_ = match[1].matched ? eval(match[1].str()) : "";
+                    returned_ = true;
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"(([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*;?)"))) {
+                    const std::string name = lower(match[1].str());
+                    const auto found = functions_.find(name);
+                    if (found == functions_.end()) throw std::runtime_error("Unknown function: " + name);
+                    if (++recursion_depth_ > 64) {
+                        --recursion_depth_;
+                        throw std::runtime_error("Maximum function recursion depth exceeded.");
+                    }
+                    const auto raw_args = split_arguments(match[2].str());
+                    std::vector<std::string> args;
+                    args.reserve(raw_args.size());
+                    for (const auto& raw_arg : raw_args) args.push_back(eval(raw_arg));
+                    const FunctionDef fn = found->second;
+                    if (args.size() != fn.parameters.size()) {
+                        --recursion_depth_;
+                        throw std::runtime_error("Function '" + name + "' expects " +
+                            std::to_string(fn.parameters.size()) + " argument(s), received " +
+                            std::to_string(args.size()) + ".");
+                    }
+                    struct SavedVariable { std::string key; bool existed; std::string value; };
+                    std::vector<SavedVariable> old_values;
+                    for (size_t a = 0; a < args.size(); ++a) {
+                        const std::string parameter = lower(fn.parameters[a]);
+                        const auto old = variables_.find(parameter);
+                        old_values.push_back({parameter, old != variables_.end(), old != variables_.end() ? old->second : std::string()});
+                        variables_[parameter] = args[a];
+                    }
+                    const bool old_returned = returned_;
+                    const std::string old_return_value = return_value_;
+                    returned_ = false;
+                    return_value_.clear();
+                    try {
+                        execute_block(fn.body, depth + 1);
+                    } catch (...) {
+                        for (const auto& entry : old_values) {
+                            if (entry.existed) variables_[entry.key] = entry.value;
+                            else variables_.erase(entry.key);
+                        }
+                        --recursion_depth_;
+                        returned_ = old_returned;
+                        return_value_ = old_return_value;
+                        throw;
+                    }
+                    const bool function_returned = returned_;
+                    const std::string function_result = return_value_;
+                    for (const auto& entry : old_values) {
+                        if (entry.existed) variables_[entry.key] = entry.value;
+                        else variables_.erase(entry.key);
+                    }
+                    returned_ = old_returned;
+                    return_value_ = old_return_value;
+                    if (function_returned) variables_[name + "_result"] = function_result;
+                    --recursion_depth_;
+                    continue;
+                }
+
+                if (std::regex_match(line, match, std::regex(R"((draw\s+rectangle|draw\s+circle|add\s+SPRITE|create\s+2d\s+canvas)\b.*)", std::regex::icase))) {
+                    std::cout << "[FRIDGE 2D command accepted; renderer not bundled in this CLI] " << line << '\n';
+                    continue;
+                }
+                if (std::regex_match(line, match, std::regex(R"((load\s+3d\s+model|add\s+OBJ)\b.*)", std::regex::icase))) {
+                    std::cout << "[FRIDGE 3D command accepted; renderer not bundled in this CLI] " << line << '\n';
+                    continue;
+                }
+
+                throw std::runtime_error("Unknown or unsupported statement: " + line);
+            } catch (const std::exception& error) {
+                throw std::runtime_error("Line " + std::to_string(source.number) + ": " + error.what());
             }
         }
     }
 };
 
-int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        std::cout << "FRIDGE v0.5.0\nUsage: fridge <script.frg>\n";
-        return 0;
+std::vector<SourceLine> read_source(const fs::path& path) {
+    std::error_code size_error;
+    const auto source_size = fs::file_size(path, size_error);
+    if (size_error) throw std::runtime_error("Cannot inspect source file: " + path.string());
+    if (source_size > 10ULL * 1024ULL * 1024ULL)
+        throw std::runtime_error("Source file exceeds the 10 MiB safety limit.");
+    std::ifstream input(path, std::ios::binary);
+    if (!input) throw std::runtime_error("Cannot open file: " + path.string());
+    std::vector<SourceLine> lines;
+    std::string line;
+    size_t number = 0;
+    while (std::getline(input, line)) {
+        ++number;
+        if (line.size() > 1024 * 1024)
+            throw std::runtime_error("Line " + std::to_string(number) + " is larger than the 1 MiB safety limit.");
+        if (line.find('\0') != std::string::npos)
+            throw std::runtime_error("Source file contains a NUL byte at line " + std::to_string(number) + ".");
+        lines.push_back({line, number});
+    }
+    if (!input.eof() && input.fail()) throw std::runtime_error("Error while reading source file: " + path.string());
+    if (lines.size() > 100000) throw std::runtime_error("Source file exceeds the 100,000-line safety limit.");
+
+    // Normalize the documented legacy "end if" / "end repeat" block closers
+    // and block headers into the v0.5 curly-brace representation.
+    for (auto& source : lines) {
+        const std::string current = trim(source.text);
+        static const std::regex legacy_end(R"(^end\s+(if|repeat|function|attempt|while|for|otherwise|error)$)", std::regex::icase);
+        std::smatch match;
+        if (std::regex_match(current, match, legacy_end)) {
+            source.text = "}";
+            continue;
+        }
+        bool has_block_open = false;
+        bool quoted = false, escaped_quote = false;
+        for (size_t column = 0; column < current.size(); ++column) {
+            const char ch = current[column];
+            if (quoted) {
+                if (escaped_quote) escaped_quote = false;
+                else if (ch == '\\') escaped_quote = true;
+                else if (ch == '"') quoted = false;
+                continue;
+            }
+            if (ch == '"') quoted = true;
+            else if (ch == '/' && column + 1 < current.size() && current[column + 1] == '/') break;
+            else if (ch == '{') { has_block_open = true; break; }
+        }
+        if (has_block_open || current == "}") continue;
+        if (std::regex_match(current, std::regex(R"(^if\s+.+$)", std::regex::icase)) ||
+            std::regex_match(current, std::regex(R"(^while\s+.+$)", std::regex::icase)) ||
+            std::regex_match(current, std::regex(R"(^repeat\s+.+\s+times$)", std::regex::icase)) ||
+            std::regex_match(current, std::regex(R"(^fnc\s+[A-Za-z_][A-Za-z0-9_]*\s*\(.*\)$)", std::regex::icase)) ||
+            lower(current) == "attempt" || lower(current) == "otherwise" ||
+            std::regex_match(current, std::regex(R"(^error\s*\(\s*\)$)", std::regex::icase))) {
+            source.text += " {";
+        }
     }
 
-    std::ifstream input(argv[1]);
-    if (!input) {
-        std::cerr << "Cannot open file: " << argv[1] << std::endl;
+    // Normalize compact otherwise branches only when the sequence appears
+    // outside quoted strings and comments; text inside a string is never syntax.
+    std::vector<SourceLine> normalized;
+    for (const auto& source : lines) {
+        size_t close_pos = std::string::npos;
+        bool in_string = false, escaped = false;
+        for (size_t column = 0; column < source.text.size(); ++column) {
+            const char ch = source.text[column];
+            if (in_string) {
+                if (escaped) escaped = false;
+                else if (ch == '\\') escaped = true;
+                else if (ch == '"') in_string = false;
+                continue;
+            }
+            if (ch == '"') {
+                in_string = true;
+                continue;
+            }
+            if (ch == '/' && column + 1 < source.text.size() && source.text[column + 1] == '/') break;
+            if (ch != '}') continue;
+
+            size_t word_start = column + 1;
+            while (word_start < source.text.size() &&
+                   std::isspace(static_cast<unsigned char>(source.text[word_start]))) ++word_start;
+            static const std::string otherwise_word = "otherwise";
+            if (word_start + otherwise_word.size() > source.text.size()) continue;
+            const std::string candidate = lower(source.text.substr(word_start, otherwise_word.size()));
+            if (candidate != otherwise_word) continue;
+
+            size_t word_end = word_start + otherwise_word.size();
+            if (word_end < source.text.size() &&
+                (std::isalnum(static_cast<unsigned char>(source.text[word_end])) || source.text[word_end] == '_')) continue;
+            size_t open_brace = word_end;
+            while (open_brace < source.text.size() &&
+                   std::isspace(static_cast<unsigned char>(source.text[open_brace]))) ++open_brace;
+            if (open_brace < source.text.size() && source.text[open_brace] == '{') {
+                close_pos = column;
+                break;
+            }
+        }
+
+        if (close_pos == std::string::npos) {
+            normalized.push_back(source);
+            continue;
+        }
+        normalized.push_back({source.text.substr(0, close_pos + 1), source.number});
+        // Keep the entire else branch on one logical line for the next
+        // pass; the generic inline-block expander will split its body and brace.
+        const std::string branch_line = trim(source.text.substr(close_pos + 1));
+        normalized.push_back({branch_line, source.number});
+    }
+
+    // Expand single-line block bodies into the regular multi-line form.
+    // Repeat to handle nested compact blocks; the line limit above bounds input.
+    for (size_t pass = 0; pass < 64; ++pass) {
+        std::vector<SourceLine> expanded;
+        bool changed = false;
+        for (const auto& source : normalized) {
+            const std::string current = trim(source.text);
+            const std::string command = lower(current);
+            const bool block_header =
+                starts_with_ci(command, "if ") ||
+                starts_with_ci(command, "while ") ||
+                starts_with_ci(command, "repeat ") ||
+                starts_with_ci(command, "fnc ") ||
+                starts_with_ci(command, "attempt") ||
+                starts_with_ci(command, "otherwise") ||
+                starts_with_ci(command, "error(");
+            if (!block_header) {
+                expanded.push_back(source);
+                continue;
+            }
+
+            size_t opening = std::string::npos;
+            bool in_text = false, escape = false;
+            for (size_t column = 0; column < source.text.size(); ++column) {
+                const char ch = source.text[column];
+                if (in_text) {
+                    if (escape) escape = false;
+                    else if (ch == '\\') escape = true;
+                    else if (ch == '"') in_text = false;
+                    continue;
+                }
+                if (ch == '"') in_text = true;
+                else if (ch == '/' && column + 1 < source.text.size() && source.text[column + 1] == '/') break;
+                else if (ch == '{') { opening = column; break; }
+            }
+            if (opening == std::string::npos) {
+                expanded.push_back(source);
+                continue;
+            }
+
+            int nesting = 1;
+            size_t closing = std::string::npos;
+            in_text = false;
+            escape = false;
+            for (size_t column = opening + 1; column < source.text.size(); ++column) {
+                const char ch = source.text[column];
+                if (in_text) {
+                    if (escape) escape = false;
+                    else if (ch == '\\') escape = true;
+                    else if (ch == '"') in_text = false;
+                    continue;
+                }
+                if (ch == '"') in_text = true;
+                else if (ch == '/' && column + 1 < source.text.size() && source.text[column + 1] == '/') break;
+                else if (ch == '{') ++nesting;
+                else if (ch == '}' && --nesting == 0) { closing = column; break; }
+            }
+            if (closing == std::string::npos) {
+                expanded.push_back(source);
+                continue;
+            }
+
+            expanded.push_back({source.text.substr(0, opening + 1), source.number});
+            const std::string inline_body = trim(source.text.substr(opening + 1, closing - opening - 1));
+            if (!inline_body.empty()) expanded.push_back({inline_body, source.number});
+            const std::string after_block = trim(source.text.substr(closing + 1));
+            expanded.push_back({"}" + (after_block.empty() ? std::string() : " " + after_block), source.number});
+            changed = true;
+        }
+        normalized = std::move(expanded);
+        if (!changed) break;
+    }
+    return normalized;
+}
+
+int check_source(const fs::path& path) {
+    const auto lines = read_source(path);
+    int depth = 0;
+    bool in_string = false, escaped = false;
+    for (const auto& line : lines) {
+        if (!scan_braces(line.text, depth, in_string, escaped)) {
+            std::cerr << "FRG-CHECK-001: Unexpected '}' at line " << line.number << ".\n";
+            return 1;
+        }
+    }
+    if (in_string) {
+        std::cerr << "FRG-CHECK-002: Unclosed string literal at end of file.\n";
+        return 1;
+    }
+    if (depth != 0) {
+        std::cerr << "FRG-CHECK-003: " << depth << " unclosed block brace(s).\n";
         return 1;
     }
 
-    std::stringstream buffer;
-    buffer << input.rdbuf();
+    auto validate_expression = [](const std::string& expression, const SourceLine& source) {
+        try {
+            (void)ExpressionParser(expression, Interpreter::Variables{}, true).parse();
+            return true;
+        } catch (const std::exception& error) {
+            std::cerr << "FRG-CHECK-008: Invalid expression at line " << source.number
+                      << ": " << error.what() << "\n";
+            return false;
+        }
+    };
 
-    std::vector<std::string> lines;
-    std::string line;
-    std::stringstream source(buffer.str());
-    while (std::getline(source, line)) {
-        lines.push_back(line);
+    const std::regex fnc_header(R"(^fnc\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*?)\)\s*\{$)", std::regex::icase);
+    const std::regex attempt_header(R"(^attempt\s*\{$)", std::regex::icase);
+    const std::regex catch_header(R"(^error\s*\(\s*\)\s*\{$)", std::regex::icase);
+    const std::regex declaration(R"((?:rem|remember)\s+([A-Za-z_][A-Za-z0-9_]*)\s+as\s+(.+))", std::regex::icase);
+    const std::regex assignment(R"(set\s+([A-Za-z_][A-Za-z0-9_]*)\s+to\s+(.+))", std::regex::icase);
+    const std::regex output(R"(show\s+(.+))", std::regex::icase);
+    const std::regex input(R"(ask\s+(.+)\s+as\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase);
+    const std::regex stop_error(R"(stop\s+with\s+error\s+(.+))", std::regex::icase);
+    const std::regex create_file(R"(create\s+file\s+(.+?)\s+with\s+(.+))", std::regex::icase);
+    const std::regex append_file(R"(add\s+(.+?)\s+to\s+file\s+(.+))", std::regex::icase);
+    const std::regex read_file(R"(read\s+file\s+(.+?)\s+into\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase);
+    const std::regex delete_file(R"(delete\s+file\s+(.+))", std::regex::icase);
+    const std::regex delete_call(R"(del\s*\(\s*(.+?)\s*\))", std::regex::icase);
+    const std::regex if_header(R"(if\s+(.+?)\s*\{)", std::regex::icase);
+    const std::regex while_header(R"(while\s+(.+?)\s*\{)", std::regex::icase);
+    const std::regex repeat_header(R"(repeat\s+(.+?)\s+times\s*\{)", std::regex::icase);
+    const std::regex subtract(R"(subtract\s+(.+?)\s+from\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase);
+    const std::regex multiply(R"(multiply\s+([A-Za-z_][A-Za-z0-9_]*)\s+by\s+(.+))", std::regex::icase);
+    const std::regex divide(R"(divide\s+([A-Za-z_][A-Za-z0-9_]*)\s+by\s+(.+))", std::regex::icase);
+    const std::regex add_variable(R"(add\s+(.+?)\s+to\s+([A-Za-z_][A-Za-z0-9_]*))", std::regex::icase);
+    const std::regex function_call(R"(([A-Za-z_][A-Za-z0-9_]*)\s*\((.*)\)\s*;?)");
+
+    for (const auto& source : lines) {
+        const std::string line = trim(source.text);
+        if (line.empty() || line == "}" || starts_with_ci(line, "//") || starts_with_ci(line, "note ")) continue;
+
+        std::smatch match;
+        if (starts_with_ci(line, "fnc ") && !std::regex_match(line, match, fnc_header)) {
+            std::cerr << "FRG-CHECK-004: Function definition must use fnc name(parameters) { at line " << source.number << ".\n";
+            return 1;
+        }
+        if (starts_with_ci(line, "attempt") && !std::regex_match(line, attempt_header)) {
+            std::cerr << "FRG-CHECK-005: attempt must be followed by '{' at line " << source.number << ".\n";
+            return 1;
+        }
+        if (starts_with_ci(line, "error") && !std::regex_match(line, catch_header)) {
+            std::cerr << "FRG-CHECK-006: Catch block must be written as error() { at line " << source.number << ".\n";
+            return 1;
+        }
+
+        if (std::regex_match(line, match, declaration) || std::regex_match(line, match, assignment) ||
+            std::regex_match(line, match, output) || std::regex_match(line, match, stop_error)) {
+            if (!validate_expression(match[match.size() - 1].str(), source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, input)) {
+            if (!validate_expression(match[1].str(), source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, create_file) || std::regex_match(line, match, append_file)) {
+            if (!validate_expression(match[1].str(), source) ||
+                !validate_expression(match[2].str(), source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, read_file) || std::regex_match(line, match, delete_file) ||
+            std::regex_match(line, match, delete_call)) {
+            const std::string target = match[1].str();
+            if (!validate_expression(target, source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, if_header) || std::regex_match(line, match, while_header) ||
+            std::regex_match(line, match, repeat_header)) {
+            if (!validate_expression(match[1].str(), source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, add_variable)) {
+            if (!validate_expression(match[1].str(), source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, subtract)) {
+            if (!validate_expression(match[1].str(), source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, multiply) || std::regex_match(line, match, divide)) {
+            if (!validate_expression(match[2].str(), source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, fnc_header)) {
+            try {
+                const auto params = split_arguments(match[2].str());
+                for (const auto& param : params) {
+                    if (!std::regex_match(param, std::regex(R"([A-Za-z_][A-Za-z0-9_]*)"))) {
+                        std::cerr << "FRG-CHECK-009: Invalid function parameter at line " << source.number << ": " << param << "\n";
+                        return 1;
+                    }
+                }
+            } catch (const std::exception& error) {
+                std::cerr << "FRG-CHECK-009: Invalid function parameters at line " << source.number << ": " << error.what() << "\n";
+                return 1;
+            }
+            continue;
+        }
+        if (std::regex_match(line, match, attempt_header) || std::regex_match(line, match, catch_header) ||
+            starts_with_ci(line, "otherwise") || starts_with_ci(line, "draw ") ||
+            starts_with_ci(line, "load 3d ") || starts_with_ci(line, "add obj ")) continue;
+        if (starts_with_ci(line, "return")) {
+            const std::string expression = trim(line.substr(6));
+            if (!expression.empty() && !validate_expression(expression, source)) return 1;
+            continue;
+        }
+        if (std::regex_match(line, match, function_call)) {
+            try {
+                for (const auto& argument : split_arguments(match[2].str())) {
+                    if (!validate_expression(argument, source)) return 1;
+                }
+            } catch (const std::exception& error) {
+                std::cerr << "FRG-CHECK-010: Invalid function call at line " << source.number << ": " << error.what() << "\n";
+                return 1;
+            }
+            continue;
+        }
+
+        std::cerr << "FRG-CHECK-007: Unknown statement at line " << source.number << ": " << line << "\n";
+        return 1;
     }
 
-    FridgeInterpreter interpreter;
+    std::cout << "FRIDGE check passed: " << lines.size()
+              << " line(s), block structure, supported statements and expression syntax are valid.\n";
+    return 0;
+}
+
+void print_help() {
+    std::cout << "FRIDGE v" << FRIDGE_VERSION << "\n"
+              << "Usage:\n"
+              << "  fridge run <file.frg>     Execute a FRIDGE program\n"
+              << "  fridge check <file.frg>   Validate source without executing it\n"
+              << "  fridge update             Check and install the latest official release\n"
+              << "  fridge version            Display the installed version\n"
+              << "  fridge help               Display this help\n"
+              << "\nPrograms use the current directory as their project root for file I/O.\n";
+}
+
+int run_program(const fs::path& path) {
+#ifndef FRIDGE_TESTING
+    fridge_update::ReleaseInfo release;
+    std::string error;
+    if (!fridge_update::check_latest_version(release, error)) {
+        std::cerr << "[FRG-UPD-REQUIRED] Cannot verify the official FRIDGE release: " << error << "\n"
+                  << "Execution is blocked. Connect to the internet and run: fridge update\n";
+        return 3;
+    }
+    if (fridge_update::update_required(release)) {
+        std::cerr << "[FRG-UPD-REQUIRED] This FRIDGE build (v" << FRIDGE_VERSION
+                  << ") is out of date. The latest release is " << release.latest_version << ".\n"
+                  << "Execution is blocked until you install the update. Run: fridge update\n";
+        return 3;
+    }
+#endif
     try {
-        interpreter.executeBlock(lines);
+        Interpreter interpreter;
+        interpreter.execute(read_source(path));
         return 0;
-    } catch (const std::exception& ex) {
-        std::cerr << ex.what() << std::endl;
+    } catch (const std::exception& error) {
+        std::cerr << "[FRG-RUN-001] " << error.what() << '\n';
+        return 1;
+    }
+}
+
+void print_version() {
+    std::cout << "FRIDGE " << FRIDGE_VERSION << "\n"
+#ifdef _WIN32
+              << "Platform: Windows\n"
+#elif defined(__APPLE__)
+              << "Platform: macOS\n"
+#elif defined(__ANDROID__)
+              << "Platform: Android (automatic package updates unsupported)\n"
+#elif defined(__linux__)
+              << "Platform: Linux\n"
+#else
+              << "Platform: Unknown\n"
+#endif
+              << "Language runtime: C++17\n";
+}
+} // namespace
+
+int main(int argc, char* argv[]) {
+    try {
+        if (argc < 2) { print_help(); return 0; }
+        const std::string command = argv[1];
+        if (command == "help" || command == "--help" || command == "-h") {
+            print_help(); return 0;
+        }
+        if (command == "version" || command == "--version" || command == "-v") {
+            print_version(); return 0;
+        }
+        if (command == "update") return fridge_update::run_update_command(argv[0]);
+
+        if (command == "run" || command == "check") {
+            if (argc != 3) {
+                std::cerr << "Usage: fridge " << command << " <file.frg>\n";
+                return 2;
+            }
+            const fs::path path = fs::u8path(argv[2]);
+            if (command == "check") {
+                try { return check_source(path); }
+                catch (const std::exception& error) {
+                    std::cerr << "[FRG-CHECK-000] " << error.what() << '\n';
+                    return 1;
+                }
+            }
+            return run_program(path);
+        }
+
+        // Preserve the v0.5.0 direct-file invocation while fixing editor commands.
+        if (argc == 2 && fs::path(command).extension() == ".frg")
+            return run_program(fs::u8path(command));
+
+        std::cerr << "Unknown command: " << command << "\nRun 'fridge help' for usage.\n";
+        return 2;
+    } catch (const std::exception& error) {
+        std::cerr << "[FRG-CLI-001] " << error.what() << '\n';
         return 1;
     }
 }

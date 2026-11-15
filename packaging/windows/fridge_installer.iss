@@ -1,18 +1,23 @@
+#ifndef FridgeVersion
+  #define FridgeVersion "0.5.2"
+#endif
+
 [Setup]
 AppName=FRIDGE Programming Language
-AppVersion=v0.5.0
+AppVersion={#FridgeVersion}
 AppPublisher=Hamsan A
+PrivilegesRequired=admin
 DefaultDirName={autopf}\FRIDGE
 DefaultGroupName=FRIDGE
 OutputDir=..\..\dist
-OutputBaseFilename=FRIDGE-Setup-v0.5.0
+OutputBaseFilename=FRIDGE-Setup-v{#FridgeVersion}
 SetupIconFile=..\..\resources\fridge.ico
 Compression=lzma2
 SolidCompression=yes
 ChangesEnvironment=yes
 
 [Files]
-Source: "..\..\dist\bin\fridge.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "..\..\dist\bin\fridge.exe"; DestDir: "{app}\bin"; Flags: ignoreversion restartreplace
 Source: "..\..\resources\fridge.ico"; DestDir: "{app}\resources"; Flags: ignoreversion
 Source: "..\..\packaging\windows\register_frg_icon.bat"; DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "..\..\tests\golden\*"; DestDir: "{app}\examples"; Flags: recursesubdirs
@@ -25,10 +30,6 @@ Root: HKCR; Subkey: "FridgeSourceFile"; ValueType: string; ValueData: "FRIDGE So
 Root: HKCR; Subkey: "FridgeSourceFile\DefaultIcon"; ValueType: string; ValueData: "{app}\resources\fridge.ico,0"
 Root: HKCR; Subkey: "FridgeSourceFile\shell\open\command"; ValueType: string; ValueData: """{app}\bin\fridge.exe"" run ""%1"""
 
-Root: HKCR; Subkey: ".uzip"; ValueType: string; ValueData: "FridgePackageFile"; Flags: uninsdeletevalue
-Root: HKCR; Subkey: "FridgePackageFile"; ValueType: string; ValueData: "FRIDGE Application Package"; Flags: uninsdeletekey
-Root: HKCR; Subkey: "FridgePackageFile\DefaultIcon"; ValueType: string; ValueData: "{app}\resources\fridge.ico,0"
-Root: HKCR; Subkey: "FridgePackageFile\shell\open\command"; ValueType: string; ValueData: """{app}\bin\fridge.exe"" run ""%1"""
 
 ; Optional PATH registration
 [Tasks]
@@ -51,3 +52,4 @@ begin
     end;
   end;
 end;
+

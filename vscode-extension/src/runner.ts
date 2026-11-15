@@ -51,9 +51,18 @@ export function findFridgeExecutable(): string | null {
     return null;
 }
 
-export function runFridgeFile(document: vscode.TextDocument): void {
-    if (document.isDirty) {
-        document.save();
+export async function runFridgeFile(document: vscode.TextDocument): Promise<void> {
+    try {
+        if (document.isUntitled || document.isDirty) {
+            const saved = await document.save();
+            if (!saved) {
+                vscode.window.showWarningMessage('FRIDGE could not run because the file was not saved.');
+                return;
+            }
+        }
+    } catch (error: any) {
+        vscode.window.showErrorMessage('Could not save the FRIDGE file: ' + (error?.message || String(error)));
+        return;
     }
 
     const exe = findFridgeExecutable();
@@ -69,7 +78,11 @@ export function runFridgeFile(document: vscode.TextDocument): void {
         return;
     }
 
-    const filePath = document.fileName;
+    const filePath = document.uri.fsPath;
+    if (!filePath || !path.isAbsolute(filePath) || !fs.existsSync(filePath)) {
+        vscode.window.showErrorMessage('Save this FRIDGE source file to disk before running it.');
+        return;
+    }
     const workingDir = path.dirname(filePath);
     const fileContent = document.getText();
 
@@ -83,7 +96,7 @@ export function runFridgeFile(document: vscode.TextDocument): void {
     if (!outputPanel) {
         outputPanel = vscode.window.createWebviewPanel(
             'fridgeStudioOutput',
-            'FRIDGE v0.5.0 Engine & Output',
+            'FRIDGE Engine & Output',
             vscode.ViewColumn.Beside,
             { enableScripts: true, retainContextWhenHidden: true }
         );
@@ -96,15 +109,31 @@ export function runFridgeFile(document: vscode.TextDocument): void {
 
     outputPanel.webview.html = getStudioHtml(path.basename(filePath));
 
-    if (/\bask\b/i.test(fileContent)) {
+    const hasInteractiveAsk = fileContent.split(/\r?\n/).some(rawLine => {
+        const line = rawLine.replace(/\/\/.*$/, '').trim();
+        return /^ask\s+/i.test(line);
+    });
+
+    if (hasInteractiveAsk) {
         const terminal = vscode.window.terminals.find(t => t.name === 'FRIDGE Terminal')
             || vscode.window.createTerminal('FRIDGE Terminal');
         terminal.show(true);
-        terminal.sendText('cd "' + workingDir + '"');
-        const cmd = process.platform === 'win32'
-            ? '& "' + exe + '" run "' + filePath + '"'
-            : '"' + exe + '" run "' + filePath + '"';
-        terminal.sendText(cmd);
+        const quote = (value: string): string => {
+            if (process.platform === 'win32') {
+                return "'" + value.replace(/'/g, "''") + "'";
+            }
+            return "'" + value.replace(/'/g, "'\\''") + "'";
+        };
+        if (process.platform === 'win32') {
+            terminal.sendText('Set-Location -LiteralPath ' + quote(workingDir));
+            terminal.sendText('& ' + quote(exe) + ' run ' + quote(filePath));
+        } else {
+            terminal.sendText('cd -- ' + quote(workingDir) + ' && ' +
+                quote(exe) + ' run ' + quote(filePath));
+        }
+        // Interactive input must be owned by the terminal. Do not launch a
+        // second background process that executes the same script again.
+        return;
     }
 
     const precommands = extractVisualConstructs(fileContent, workingDir);
@@ -115,47 +144,58 @@ export function runFridgeFile(document: vscode.TextDocument): void {
     }
 
     try {
-        activeProcess = spawn(exe, ['run', filePath], { cwd: workingDir });
+        const child = spawn(exe, ['run', filePath], { cwd: workingDir });
+        activeProcess = child;
 
-        activeProcess.stdout.on('data', (data: Buffer) => {
-            const lines = data.toString().split(/\r?\n/);
-            for (const line of lines) {
-                if (!line.trim()) {
-                    continue;
-                }
-                parseAndDispatchLine(line, workingDir);
+        child.stdout.on('data', (data: Buffer) => {
+            if (activeProcess !== child) return;
+            for (const line of data.toString().split(/\r?\n/)) {
+                if (line.trim()) parseAndDispatchLine(line, workingDir);
             }
         });
 
-        activeProcess.stderr.on('data', (data: Buffer) => {
-            const lines = data.toString().split(/\r?\n/);
-            for (const line of lines) {
-                if (!line.trim()) {
-                    continue;
-                }
-                if (outputPanel) {
-                    outputPanel.webview.postMessage({ type: 'stderr', text: line });
-                }
+        child.stderr.on('data', (data: Buffer) => {
+            if (activeProcess !== child) return;
+            for (const line of data.toString().split(/\r?\n/)) {
+                if (line.trim() && outputPanel) outputPanel.webview.postMessage({ type: 'stderr', text: line });
             }
         });
 
-        activeProcess.on('close', (code: number | null) => {
-            if (outputPanel) {
-                outputPanel.webview.postMessage({ type: 'exit', code: code ?? 0 });
-            }
+        child.on('error', (error: Error) => {
+            if (activeProcess !== child) return;
             activeProcess = undefined;
+            vscode.window.showErrorMessage('Could not start FRIDGE: ' + error.message);
+            if (outputPanel) {
+                outputPanel.webview.postMessage({ type: 'stderr', text: error.message });
+                outputPanel.webview.postMessage({ type: 'exit', code: 1 });
+            }
+        });
+
+        child.on('close', (code: number | null) => {
+            if (activeProcess !== child) return;
+            activeProcess = undefined;
+            if (outputPanel) outputPanel.webview.postMessage({ type: 'exit', code: code ?? 0 });
         });
     } catch (err: any) {
         vscode.window.showErrorMessage('Error running FRIDGE file: ' + (err?.message || String(err)));
     }
 }
 
-function loadObjGeometry(fullPath: string): { vertices: number[][]; edges: number[][] } | null {
-    if (!fs.existsSync(fullPath)) {
-        return null;
-    }
+function loadObjGeometry(fullPath: string, workspaceRoot: string): { vertices: number[][]; edges: number[][] } | null {
     try {
-        const content = fs.readFileSync(fullPath, 'utf-8');
+        const root = fs.realpathSync(workspaceRoot);
+        const resolved = fs.realpathSync(fullPath);
+        const relative = path.relative(root, resolved);
+        if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+            return null;
+        }
+
+        const stat = fs.statSync(resolved);
+        if (!stat.isFile() || stat.size > 5 * 1024 * 1024) {
+            return null;
+        }
+
+        const content = fs.readFileSync(resolved, 'utf-8');
         const vertices: number[][] = [];
         const edges: number[][] = [];
         const lines = content.split(/\r?\n/);
@@ -163,16 +203,19 @@ function loadObjGeometry(fullPath: string): { vertices: number[][]; edges: numbe
             const trimmed = line.trim();
             if (trimmed.startsWith('v ')) {
                 const parts = trimmed.split(/\s+/);
-                vertices.push([Number(parts[1]) || 0, Number(parts[2]) || 0, Number(parts[3]) || 0]);
+                const vertex = [Number(parts[1]), Number(parts[2]), Number(parts[3])];
+                if (!vertex.every(value => Number.isFinite(value) && Math.abs(value) <= 1000000)) return null;
+                vertices.push(vertex);
+                if (vertices.length > 100000) return null;
             } else if (trimmed.startsWith('f ')) {
                 const parts = trimmed.split(/\s+/).slice(1);
-                const indices = parts.map(p => parseInt(p.split('/')[0], 10) - 1).filter(n => !isNaN(n));
+                const indices = parts.map(part => parseInt(part.split('/')[0], 10) - 1);
+                if (indices.length < 2 || indices.some(index => !Number.isInteger(index) || index < 0 || index >= vertices.length)) {
+                    return null;
+                }
                 for (let i = 0; i < indices.length; i++) {
-                    const a = indices[i];
-                    const b = indices[(i + 1) % indices.length];
-                    if (a >= 0 && b >= 0) {
-                        edges.push([a, b]);
-                    }
+                    edges.push([indices[i], indices[(i + 1) % indices.length]]);
+                    if (edges.length > 250000) return null;
                 }
             }
         }
@@ -195,7 +238,7 @@ function parseAndDispatchLine(line: string, workingDir: string): void {
     const matchModel = line.match(/\[FRIDGE 3D Asset\] Loaded model '(.*?)' as '(.*?)'/i);
     if (matchModel) {
         const fullPath = path.resolve(workingDir, matchModel[1]);
-        const meshData = loadObjGeometry(fullPath);
+        const meshData = loadObjGeometry(fullPath, workingDir);
         outputPanel.webview.postMessage({
             type: 'spawn3D',
             name: matchModel[2] + ' (' + path.basename(matchModel[1]) + ')',
@@ -225,7 +268,7 @@ function extractVisualConstructs(source: string, workingDir: string): Array<Reco
         const modelMatch = line.match(/^load\s+3d\s+model\s+from\s+"([^"]+)"\s+as\s+([a-zA-Z0-9_]+)/i);
         if (modelMatch) {
             const fullPath = path.resolve(workingDir, modelMatch[1]);
-            const meshData = loadObjGeometry(fullPath);
+            const meshData = loadObjGeometry(fullPath, workingDir);
             messages.push({
                 type: 'spawn3D',
                 name: modelMatch[2] + ' (' + path.basename(modelMatch[1]) + ')',
@@ -281,6 +324,15 @@ function extractVisualConstructs(source: string, workingDir: string): Array<Reco
 }
 
 function getStudioHtml(fileName: string): string {
+    const htmlEscapes: Record<string, string> = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    };
+    const safeFileName = fileName.replace(/[&<>"']/g, character => htmlEscapes[character] || character);
+
     return [
         '<!DOCTYPE html>',
         '<html lang="en">',
@@ -311,7 +363,7 @@ function getStudioHtml(fileName: string): string {
         '</head>',
         '<body>',
         '  <header>',
-        '    <div class="brand">FRIDGE v0.5.0 Runtime — ' + fileName + '</div>',
+        '    <div class="brand">FRIDGE v0.5.0 Runtime — ' + safeFileName + '</div>',
         '    <div class="tabs">',
         '      <button class="tab-btn active" id="tab-console" onclick="setMode(\'console\')">Console</button>',
         '      <button class="tab-btn" id="tab-2d" onclick="setMode(\'2d\')">2D Canvas</button>',
@@ -328,7 +380,7 @@ function getStudioHtml(fileName: string): string {
         '    </div>',
         '  </div>',
         '  <div id="console-container">',
-        '    <div class="log-line log-sys">>>> Executing ' + fileName + ' in FRIDGE v0.5.0 Engine...</div>',
+        '    <div class="log-line log-sys">>>> Executing ' + safeFileName + ' in FRIDGE Engine...</div>',
         '  </div>',
         '<script>',
         '  const stageArea = document.getElementById("stage-area");',
@@ -373,9 +425,9 @@ function getStudioHtml(fileName: string): string {
         '',
         '  function updateHud() {',
         '    if (currentMode === "2d") {',
-        '      hudList.innerHTML = shapes2D.length ? shapes2D.map((s, i) => "• [" + (i+1) + "] " + s.shape + " (" + s.x + "," + s.y + ")").join("<br>") : "2D Stage Ready";',
+        '      hudList.textContent = shapes2D.length ? shapes2D.map((s, i) => "[" + (i+1) + "] " + s.shape + " (" + s.x + "," + s.y + ")").join("\\n") : "2D Stage Ready";',
         '    } else if (currentMode === "3d") {',
-        '      hudList.innerHTML = nodes3D.length ? nodes3D.map((n, i) => "• [" + (i+1) + "] " + n.name).join("<br>") : "Drag mouse to orbit 3D camera";',
+        '      hudList.textContent = nodes3D.length ? nodes3D.map((n, i) => "[" + (i+1) + "] " + n.name).join("\\n") : "Drag mouse to orbit 3D camera";',
         '    }',
         '  }',
         '',
