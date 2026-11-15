@@ -52,18 +52,17 @@ export function findFridgeExecutable(): string | null {
 }
 
 export async function runFridgeFile(document: vscode.TextDocument): Promise<void> {
-    if (document.isUntitled) {
-        const saved = await document.save();
-        if (!saved) {
-            vscode.window.showWarningMessage('Save the FRIDGE file before running it.');
-            return;
+    try {
+        if (document.isUntitled || document.isDirty) {
+            const saved = await document.save();
+            if (!saved) {
+                vscode.window.showWarningMessage('FRIDGE could not run because the file was not saved.');
+                return;
+            }
         }
-    } else if (document.isDirty) {
-        const saved = await document.save();
-        if (!saved) {
-            vscode.window.showWarningMessage('FRIDGE could not run because the file was not saved.');
-            return;
-        }
+    } catch (error: any) {
+        vscode.window.showErrorMessage('Could not save the FRIDGE file: ' + (error?.message || String(error)));
+        return;
     }
 
     const exe = findFridgeExecutable();
@@ -145,47 +144,58 @@ export async function runFridgeFile(document: vscode.TextDocument): Promise<void
     }
 
     try {
-        activeProcess = spawn(exe, ['run', filePath], { cwd: workingDir });
+        const child = spawn(exe, ['run', filePath], { cwd: workingDir });
+        activeProcess = child;
 
-        activeProcess.stdout.on('data', (data: Buffer) => {
-            const lines = data.toString().split(/\r?\n/);
-            for (const line of lines) {
-                if (!line.trim()) {
-                    continue;
-                }
-                parseAndDispatchLine(line, workingDir);
+        child.stdout.on('data', (data: Buffer) => {
+            if (activeProcess !== child) return;
+            for (const line of data.toString().split(/\r?\n/)) {
+                if (line.trim()) parseAndDispatchLine(line, workingDir);
             }
         });
 
-        activeProcess.stderr.on('data', (data: Buffer) => {
-            const lines = data.toString().split(/\r?\n/);
-            for (const line of lines) {
-                if (!line.trim()) {
-                    continue;
-                }
-                if (outputPanel) {
-                    outputPanel.webview.postMessage({ type: 'stderr', text: line });
-                }
+        child.stderr.on('data', (data: Buffer) => {
+            if (activeProcess !== child) return;
+            for (const line of data.toString().split(/\r?\n/)) {
+                if (line.trim() && outputPanel) outputPanel.webview.postMessage({ type: 'stderr', text: line });
             }
         });
 
-        activeProcess.on('close', (code: number | null) => {
-            if (outputPanel) {
-                outputPanel.webview.postMessage({ type: 'exit', code: code ?? 0 });
-            }
+        child.on('error', (error: Error) => {
+            if (activeProcess !== child) return;
             activeProcess = undefined;
+            vscode.window.showErrorMessage('Could not start FRIDGE: ' + error.message);
+            if (outputPanel) {
+                outputPanel.webview.postMessage({ type: 'stderr', text: error.message });
+                outputPanel.webview.postMessage({ type: 'exit', code: 1 });
+            }
+        });
+
+        child.on('close', (code: number | null) => {
+            if (activeProcess !== child) return;
+            activeProcess = undefined;
+            if (outputPanel) outputPanel.webview.postMessage({ type: 'exit', code: code ?? 0 });
         });
     } catch (err: any) {
         vscode.window.showErrorMessage('Error running FRIDGE file: ' + (err?.message || String(err)));
     }
 }
 
-function loadObjGeometry(fullPath: string): { vertices: number[][]; edges: number[][] } | null {
-    if (!fs.existsSync(fullPath)) {
-        return null;
-    }
+function loadObjGeometry(fullPath: string, workspaceRoot: string): { vertices: number[][]; edges: number[][] } | null {
     try {
-        const content = fs.readFileSync(fullPath, 'utf-8');
+        const root = fs.realpathSync(workspaceRoot);
+        const resolved = fs.realpathSync(fullPath);
+        const relative = path.relative(root, resolved);
+        if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+            return null;
+        }
+
+        const stat = fs.statSync(resolved);
+        if (!stat.isFile() || stat.size > 5 * 1024 * 1024) {
+            return null;
+        }
+
+        const content = fs.readFileSync(resolved, 'utf-8');
         const vertices: number[][] = [];
         const edges: number[][] = [];
         const lines = content.split(/\r?\n/);
@@ -193,16 +203,19 @@ function loadObjGeometry(fullPath: string): { vertices: number[][]; edges: numbe
             const trimmed = line.trim();
             if (trimmed.startsWith('v ')) {
                 const parts = trimmed.split(/\s+/);
-                vertices.push([Number(parts[1]) || 0, Number(parts[2]) || 0, Number(parts[3]) || 0]);
+                const vertex = [Number(parts[1]), Number(parts[2]), Number(parts[3])];
+                if (!vertex.every(value => Number.isFinite(value) && Math.abs(value) <= 1000000)) return null;
+                vertices.push(vertex);
+                if (vertices.length > 100000) return null;
             } else if (trimmed.startsWith('f ')) {
                 const parts = trimmed.split(/\s+/).slice(1);
-                const indices = parts.map(p => parseInt(p.split('/')[0], 10) - 1).filter(n => !isNaN(n));
+                const indices = parts.map(part => parseInt(part.split('/')[0], 10) - 1);
+                if (indices.length < 2 || indices.some(index => !Number.isInteger(index) || index < 0 || index >= vertices.length)) {
+                    return null;
+                }
                 for (let i = 0; i < indices.length; i++) {
-                    const a = indices[i];
-                    const b = indices[(i + 1) % indices.length];
-                    if (a >= 0 && b >= 0) {
-                        edges.push([a, b]);
-                    }
+                    edges.push([indices[i], indices[(i + 1) % indices.length]]);
+                    if (edges.length > 250000) return null;
                 }
             }
         }
@@ -225,7 +238,7 @@ function parseAndDispatchLine(line: string, workingDir: string): void {
     const matchModel = line.match(/\[FRIDGE 3D Asset\] Loaded model '(.*?)' as '(.*?)'/i);
     if (matchModel) {
         const fullPath = path.resolve(workingDir, matchModel[1]);
-        const meshData = loadObjGeometry(fullPath);
+        const meshData = loadObjGeometry(fullPath, workingDir);
         outputPanel.webview.postMessage({
             type: 'spawn3D',
             name: matchModel[2] + ' (' + path.basename(matchModel[1]) + ')',
@@ -311,6 +324,14 @@ function extractVisualConstructs(source: string, workingDir: string): Array<Reco
 }
 
 function getStudioHtml(fileName: string): string {
+    const safeFileName = fileName.replace(/[&<>"']/g, character => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[character] || character));
+
     return [
         '<!DOCTYPE html>',
         '<html lang="en">',
@@ -341,7 +362,7 @@ function getStudioHtml(fileName: string): string {
         '</head>',
         '<body>',
         '  <header>',
-        '    <div class="brand">FRIDGE v0.5.0 Runtime — ' + fileName + '</div>',
+        '    <div class="brand">FRIDGE v0.5.0 Runtime — ' + safeFileName + '</div>',
         '    <div class="tabs">',
         '      <button class="tab-btn active" id="tab-console" onclick="setMode(\'console\')">Console</button>',
         '      <button class="tab-btn" id="tab-2d" onclick="setMode(\'2d\')">2D Canvas</button>',
@@ -403,9 +424,9 @@ function getStudioHtml(fileName: string): string {
         '',
         '  function updateHud() {',
         '    if (currentMode === "2d") {',
-        '      hudList.innerHTML = shapes2D.length ? shapes2D.map((s, i) => "• [" + (i+1) + "] " + s.shape + " (" + s.x + "," + s.y + ")").join("<br>") : "2D Stage Ready";',
+        '      hudList.textContent = shapes2D.length ? shapes2D.map((s, i) => "[" + (i+1) + "] " + s.shape + " (" + s.x + "," + s.y + ")").join("\\n") : "2D Stage Ready";',
         '    } else if (currentMode === "3d") {',
-        '      hudList.innerHTML = nodes3D.length ? nodes3D.map((n, i) => "• [" + (i+1) + "] " + n.name).join("<br>") : "Drag mouse to orbit 3D camera";',
+        '      hudList.textContent = nodes3D.length ? nodes3D.map((n, i) => "[" + (i+1) + "] " + n.name).join("\\n") : "Drag mouse to orbit 3D camera";',
         '    }',
         '  }',
         '',
