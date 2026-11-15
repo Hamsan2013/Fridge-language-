@@ -1051,7 +1051,7 @@ int main(int argc, char* argv[]) {
         if (command == "version" || command == "--version" || command == "-v") {
             print_version(); return 0;
         }
-        if (command == "update") return fridge_update::run_update_command();
+        if (command == "update") return fridge_update::run_update_command(argv[0]);
 
         if (command == "run" || command == "check") {
             if (argc != 3) {
