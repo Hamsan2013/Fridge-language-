@@ -12,7 +12,11 @@ rem counter as 0
 repeat 3 times {
     set counter to counter + 1
 }
-if counter is 3 {
+show 2 + 3 * 4
+while counter < 5 {
+    add 1 to counter
+}
+if counter is 5 {
     show "math-and-loop-ok"
 } otherwise {
     show "math-and-loop-failed"
@@ -22,6 +26,12 @@ fnc greet(who) {
     show "Hi " joined with who
 }
 greet("FRIDGE")
+
+fnc total(a, b) {
+    return a + b
+}
+total(8, 9)
+show total_result
 ]=])
 
 file(WRITE "${TEST_WORK_DIR}/smoke.frg" "${script}")
@@ -36,7 +46,7 @@ if(NOT run_result EQUAL 0)
     message(FATAL_ERROR "FRIDGE smoke run failed (${run_result}): ${run_error}\n${run_output}")
 endif()
 
-foreach(expected "Hello world" "math-and-loop-ok" "Hi FRIDGE")
+foreach(expected "Hello world" "14" "math-and-loop-ok" "Hi FRIDGE" "17")
     string(FIND "${run_output}" "${expected}" found)
     if(found EQUAL -1)
         message(FATAL_ERROR "Expected output '${expected}' not found. Output:\n${run_output}")
@@ -72,3 +82,32 @@ if(bad_result EQUAL 0)
 endif()
 
 message(STATUS "FRIDGE smoke tests passed.")
+
+
+file(WRITE "\${TEST_WORK_DIR}/bad-expression.frg" "show 1 +\n")
+execute_process(
+    COMMAND "\${FRIDGE_TEST_EXECUTABLE}" check "\${TEST_WORK_DIR}/bad-expression.frg"
+    WORKING_DIRECTORY "\${TEST_WORK_DIR}"
+    RESULT_VARIABLE expression_result
+    OUTPUT_VARIABLE expression_output
+    ERROR_VARIABLE expression_error
+)
+if(expression_result EQUAL 0)
+    message(FATAL_ERROR "Malformed expression unexpectedly passed fridge check.")
+endif()
+
+file(REMOVE "\${TEST_WORK_DIR}/../fridge_escape.txt")
+file(WRITE "\${TEST_WORK_DIR}/traversal.frg" "create file \\"../fridge_escape.txt\\" with \\"blocked\\"\n")
+execute_process(
+    COMMAND "\${FRIDGE_TEST_EXECUTABLE}" run "\${TEST_WORK_DIR}/traversal.frg"
+    WORKING_DIRECTORY "\${TEST_WORK_DIR}"
+    RESULT_VARIABLE traversal_result
+    OUTPUT_VARIABLE traversal_output
+    ERROR_VARIABLE traversal_error
+)
+if(traversal_result EQUAL 0)
+    message(FATAL_ERROR "FRIDGE unexpectedly allowed a parent-directory traversal.")
+endif()
+if(EXISTS "\${TEST_WORK_DIR}/../fridge_escape.txt")
+    message(FATAL_ERROR "FRIDGE wrote a file outside the project directory.")
+endif()
