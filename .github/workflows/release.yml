@@ -53,7 +53,7 @@ jobs:
           $exe = Get-ChildItem -Path "build" -Recurse -Filter "fridge.exe" | Where-Object { $_.FullName -notmatch "fridge_test" } | Select-Object -First 1
           if (-not $exe) { throw "Release fridge.exe not found." }
           Copy-Item $exe.FullName "dist\bin\fridge.exe" -Force
-          iscc "packaging\windows\fridge_installer.iss"
+          iscc /DFridgeVersion=${{ steps.version.outputs.VERSION }} "packaging\windows\fridge_installer.iss"
           if (-not (Test-Path "dist\FRIDGE-Setup-v${{ steps.version.outputs.VERSION }}.exe")) { throw "Windows installer output is missing." }
       - uses: actions/upload-artifact@v4
         with:
