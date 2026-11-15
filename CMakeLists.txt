@@ -17,9 +17,9 @@ set(FRIDGE_SOURCES
     src/updater.cpp
 )
 
-add_executable(fridge \${FRIDGE_SOURCES})
-target_include_directories(fridge PRIVATE \${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_compile_definitions(fridge PRIVATE FRIDGE_VERSION="\${PROJECT_VERSION}")
+add_executable(fridge ${FRIDGE_SOURCES})
+target_include_directories(fridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_definitions(fridge PRIVATE FRIDGE_VERSION="${PROJECT_VERSION}")
 set_target_properties(fridge PROPERTIES OUTPUT_NAME "fridge")
 
 install(TARGETS fridge RUNTIME DESTINATION bin)
@@ -27,17 +27,17 @@ install(DIRECTORY stdlib/ DESTINATION stdlib OPTIONAL)
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(fridge_test \${FRIDGE_SOURCES})
-    target_include_directories(fridge_test PRIVATE \${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_executable(fridge_test ${FRIDGE_SOURCES})
+    target_include_directories(fridge_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_definitions(fridge_test PRIVATE
-        FRIDGE_VERSION="\${PROJECT_VERSION}"
+        FRIDGE_VERSION="${PROJECT_VERSION}"
         FRIDGE_TESTING=1
     )
     add_test(
         NAME fridge_smoke
-        COMMAND \${CMAKE_COMMAND}
+        COMMAND ${CMAKE_COMMAND}
             -DFRIDGE_TEST_EXECUTABLE=$<TARGET_FILE:fridge_test>
-            -DTEST_WORK_DIR=\${CMAKE_CURRENT_BINARY_DIR}/fridge-test-work
-            -P \${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_test.cmake
+            -DTEST_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/fridge-test-work
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke_test.cmake
     )
 endif()
